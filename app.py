@@ -17,11 +17,12 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import (Flask, flash, g, redirect, render_template, request,
-                   session, url_for)
+from flask import (Flask, Response, flash, g, redirect, render_template, request,
+                   send_from_directory, session, url_for)
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+VERSION = "1.5"
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 DB_PATH = os.path.join(CONFIG_DIR, "uchet.db")
@@ -345,7 +346,7 @@ def inject():
         session["csrf"] = secrets.token_hex(16)
     return {
         "csrf": session["csrf"], "is_admin": is_admin(), "student": T["student"],
-        "read_only_mode": not ADMIN_PASSWORD,
+        "read_only_mode": not ADMIN_PASSWORD, "version": VERSION,
     }
 
 
@@ -357,7 +358,7 @@ def headers(resp):
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-    if request.endpoint != "static":
+    if request.endpoint not in ("static", "apple_icon", "manifest"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -409,6 +410,28 @@ def history():
 def stats():
     con = get_db()
     return render_template("stats.html", s=compute_stats(con), chart=chart_svg(weekly_series(con, 12)))
+
+
+# ───────────────────────────── ИКОНКИ И МАНИФЕСТ (для «На экран Домой») ─────────────────────────────
+@app.route("/apple-touch-icon.png")
+@app.route("/apple-touch-icon-precomposed.png")
+def apple_icon():
+    return send_from_directory(os.path.join(app.root_path, "static", "icons"),
+                               "apple-touch-icon.png", max_age=86400)
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    data = {
+        "name": "Мотиватор", "short_name": "Мотиватор", "lang": "ru",
+        "start_url": "/", "scope": "/", "display": "standalone",
+        "background_color": "#0a0e16", "theme_color": "#0a0e16",
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        ],
+    }
+    return Response(json.dumps(data, ensure_ascii=False), mimetype="application/manifest+json")
 
 
 @app.route("/healthz")
