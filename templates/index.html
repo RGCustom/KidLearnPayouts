@@ -19,11 +19,15 @@
     <form method="post" action="{{ url_for('add_quick') }}" class="stack">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label class="field">Дата<input type="date" name="date" value="{{ today }}" required></label>
+      {% if tasks %}
       <div class="btns">
-        {% for kind, amount in quick.items() %}
-        <button class="btn tile" name="kind" value="{{ kind }}"><span>{{ quick_names[kind] }}</span><b>{{ amount|money(True) }}</b></button>
+        {% for t in tasks %}
+        <button class="btn tile" name="kind" value="{{ t.id }}"><span>{{ t.name }}</span><b class="{{ 'p' if t.amount > 0 else 'n' if t.amount < 0 }}">{{ t.amount|money(True) }}</b></button>
         {% endfor %}
       </div>
+      {% else %}
+      <p class="muted">Категорий пока нет — добавьте их на странице «<a href="{{ url_for('tariffs') }}">Тарифы</a>».</p>
+      {% endif %}
     </form>
   </section>
 

@@ -8,6 +8,7 @@
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -30,15 +31,28 @@ if os.environ.get("TZ") and hasattr(time, "tzset"):
     time.tzset()
 
 # ───────────────────────────── ТАРИФЫ ─────────────────────────────
+DEFAULT_TASKS = [
+    {"id": "homework", "name": "Домашка до 18:00", "amount": 100, "once_per_day": True},
+    {"id": "dishes", "name": "Посудомойка", "amount": 50, "once_per_day": False},
+    {"id": "trash", "name": "Мусор", "amount": 50, "once_per_day": False},
+]
 DEFAULT_TARIFFS = {
     "student": "Максим",
-    "homework": 100,
-    "dishes": 50,
-    "trash": 50,
+    "tasks": DEFAULT_TASKS,
     "extra_payout_limit": 1000,
     "grade":   {"10": 200, "9": 200, "8": 100, "7": 0, "6": 0, "5": 0, "4": 0, "3": -100, "2": -100, "1": -100},
     "control": {"10": 1000, "9": 600, "8": 300, "7": 0, "6": 0, "5": 0, "4": 0, "3": -300, "2": -300, "1": -300},
 }
+
+
+def _write_tariffs(t):
+    data = dict(t)
+    data["grade"] = {str(k): v for k, v in t["grade"].items()}
+    data["control"] = {str(k): v for k, v in t["control"].items()}
+    tmp = TARIFF_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, TARIFF_PATH)
 
 
 def load_tariffs():
@@ -49,42 +63,44 @@ def load_tariffs():
         t = json.load(f)
     merged = dict(DEFAULT_TARIFFS)
     merged.update(t)
+    migrated = "tasks" not in t
+    if migrated:  # старый формат: homework / dishes / trash отдельными ключами
+        merged["tasks"] = [dict(x, amount=int(t.get(x["id"], x["amount"]))) for x in DEFAULT_TASKS]
+        for k in ("homework", "dishes", "trash"):
+            merged.pop(k, None)
+    merged["tasks"] = [
+        {"id": str(x["id"]), "name": str(x["name"])[:40], "amount": int(x["amount"]),
+         "once_per_day": bool(x.get("once_per_day"))} for x in merged["tasks"]]
     for k in ("grade", "control"):
         merged[k] = {int(g_): int(v) for g_, v in merged[k].items()}
+    if migrated:
+        _write_tariffs(merged)
     return merged
 
 
 KIND_NAMES = {
-    "homework": "Домашка до 18:00",
-    "dishes": "Посудомойка",
-    "trash": "Мусор",
     "grade": "Оценки",
     "control": "Контрольные",
     "custom": "По договорённости",
     "carry": "Перенос остатка",
 }
 
-T, GRADES, QUICK = {}, [], {}
+T, GRADES, TASKS, TASK_BY_ID = {}, [], [], {}
 _tariff_lock = threading.Lock()
 
 
 def apply_tariffs(t):
     """Подменяет тарифы «на лету» (без перезапуска)."""
-    global T, GRADES, QUICK
+    global T, GRADES, TASKS, TASK_BY_ID
     T = t
     GRADES = sorted(t["grade"], reverse=True)
-    QUICK = {"homework": t["homework"], "dishes": t["dishes"], "trash": t["trash"]}
+    TASKS = t["tasks"]
+    TASK_BY_ID = {x["id"]: x for x in TASKS}
 
 
 def save_tariffs(t):
-    data = dict(t)
-    data["grade"] = {str(k): v for k, v in t["grade"].items()}
-    data["control"] = {str(k): v for k, v in t["control"].items()}
     with _tariff_lock:
-        tmp = TARIFF_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, TARIFF_PATH)
+        _write_tariffs(t)
         apply_tariffs(t)
 
 
@@ -195,18 +211,20 @@ def weekly_series(con, weeks):
 
 
 def compute_stats(con):
-    rows = con.execute("SELECT date,kind,grade,amount FROM events WHERE kind!='carry'").fetchall()
+    rows = con.execute("SELECT date,kind,grade,amount,descr FROM events WHERE kind!='carry' ORDER BY date, id").fetchall()
     earned = sum(r["amount"] for r in rows if r["amount"] > 0)
     fines = sum(r["amount"] for r in rows if r["amount"] < 0)
     pays = con.execute("SELECT id,date,amount FROM payouts ORDER BY id DESC").fetchall()
     paid = sum(p["amount"] for p in pays)
 
-    cats = {k: [0, 0] for k in ("homework", "dishes", "trash", "grade", "control", "custom")}
+    per = {}  # kind -> [кол-во, сумма, последнее название]
     dist = {"grade": defaultdict(int), "control": defaultdict(int)}
     days = set()
     for r in rows:
-        cats[r["kind"]][0] += 1
-        cats[r["kind"]][1] += r["amount"]
+        p = per.setdefault(r["kind"], [0, 0, ""])
+        p[0] += 1
+        p[1] += r["amount"]
+        p[2] = r["descr"]
         if r["kind"] in dist and r["grade"] is not None:
             dist[r["kind"]][r["grade"]] += 1
         days.add(r["date"])
@@ -220,12 +238,22 @@ def compute_stats(con):
             "title": title, "count": cnt, "avg": avg,
             "bars": [(g_, dist[kind].get(g_, 0), (dist[kind].get(g_, 0) / mx * 100) if mx else 0) for g_ in GRADES],
         })
+    special = ("grade", "control", "custom")
+    order = ([x["id"] for x in TASKS if x["id"] in per]
+             + [k for k in per if k not in TASK_BY_ID and k not in special]
+             + [k for k in special if k in per])
+
+    def label(k):
+        if k in TASK_BY_ID:
+            return TASK_BY_ID[k]["name"]
+        return KIND_NAMES[k] if k in special else f"{per[k][2]} (удалена)"
+
     net = earned + fines
     return {
         "earned": earned, "fines": fines, "net": net, "paid": paid,
         "balance": balance(con), "pays": pays, "pay_count": len(pays),
         "pay_avg": paid // len(pays) if pays else 0,
-        "cats": [(KIND_NAMES[k], v[0], v[1]) for k, v in cats.items() if v[0]],
+        "cats": [(label(k), per[k][0], per[k][1]) for k in order],
         "grade_blocks": grade_blocks, "active_days": len(days),
     }
 
@@ -365,9 +393,8 @@ def index():
     return render_template(
         "index.html", bal=bal, limit=limit, progress=max(0, min(100, bal * 100 // limit)) if limit else 0,
         over=bal > limit, hint=pay_hint(), recent=recent, chart=chart_svg(weekly_series(con, 8)),
-        today=date.today().isoformat(), quick=QUICK, grades=GRADES,
-        tariff_json=json.dumps({k: T[k] for k in ("grade", "control")}),
-        quick_names=KIND_NAMES)
+        today=date.today().isoformat(), tasks=TASKS, grades=GRADES,
+        tariff_json=json.dumps({k: T[k] for k in ("grade", "control")}))
 
 
 @app.route("/history")
@@ -395,33 +422,76 @@ def tariffs():
     return render_template("tariffs.html", t=T, grades=GRADES)
 
 
+class FormError(ValueError):
+    """Ошибка ввода с понятным пользователю текстом."""
+
+
 @app.route("/tariffs", methods=["POST"], endpoint="tariffs_save")
 @admin_required
 def tariffs_save():
     f = request.form
 
-    def num(name, lo=-100000, hi=100000):
-        v = int(f[name].replace("−", "-").replace(" ", "").replace("\u00a0", ""))
+    def to_int(raw, lo, hi, what):
+        try:
+            v = int(str(raw).replace("−", "-").replace(" ", "").replace("\u00a0", ""))
+        except ValueError:
+            raise FormError(f"{what}: нужно целое число.")
         if not lo <= v <= hi:
-            raise ValueError
+            raise FormError(f"{what}: допустимо от {lo} до {hi}.")
         return v
+
+    def parse_tasks():
+        if not f.getlist("task_idx"):
+            raise FormError("Форма категорий повреждена — обновите страницу.")
+        tasks, names, ids = [], set(), set()
+        for idx in dict.fromkeys(f.getlist("task_idx")):
+            if not re.fullmatch(r"\w{1,24}", idx):
+                raise FormError("Форма категорий повреждена — обновите страницу.")
+            tid = f.get(f"task_{idx}_id", "").strip()
+            name = f.get(f"task_{idx}_name", "").strip()[:40]
+            raw = f.get(f"task_{idx}_amount", "").strip()
+            if tid and f.get(f"task_{idx}_del") is not None:
+                continue  # категория удалена (старые записи остаются в истории)
+            if not tid and not name and not raw:
+                continue  # пустая строка «добавить»
+            if tid and tid not in TASK_BY_ID:
+                raise FormError("Категория не найдена — обновите страницу.")
+            if not name:
+                raise FormError("У категории должно быть название.")
+            if name.casefold() in names:
+                raise FormError(f"Категория «{name}» указана дважды.")
+            names.add(name.casefold())
+            amount = to_int(raw, -100000, 100000, f"«{name}»")
+            if not tid:
+                while True:
+                    tid = "t" + secrets.token_hex(3)
+                    if tid not in TASK_BY_ID and tid not in ids:
+                        break
+            ids.add(tid)
+            tasks.append({"id": tid, "name": name, "amount": amount, "once_per_day": f.get(f"task_{idx}_once") is not None})
+        if len(tasks) > 30:
+            raise FormError("Слишком много категорий (максимум 30).")
+        return tasks
 
     try:
         student = f.get("student", "").strip()[:40]
         if not student:
-            raise ValueError
+            raise FormError("Укажите имя ученика.")
         new = {
             "student": student,
-            "homework": num("homework", 0),
-            "dishes": num("dishes", 0),
-            "trash": num("trash", 0),
-            "extra_payout_limit": num("limit", 0),
-            "grade": {g: num(f"g{g}") for g in GRADES},
-            "control": {g: num(f"c{g}") for g in GRADES},
+            "tasks": parse_tasks(),
+            "extra_payout_limit": to_int(f.get("limit", ""), 0, 100000, "Выплата вне очереди"),
+            "grade": {g: to_int(f.get(f"g{g}", ""), -100000, 100000, f"Оценка {g}") for g in GRADES},
+            "control": {g: to_int(f.get(f"c{g}", ""), -100000, 100000, f"Контрольная {g}") for g in GRADES},
         }
-    except (ValueError, KeyError):
-        flash("Проверьте значения: суммы — целые числа (домашка и дела не меньше 0, оценки от −100000 до 100000).", "err")
+    except FormError as e:
+        flash(str(e), "err")
         return redirect(url_for("tariffs"))
+    con = get_db()
+    for x in new["tasks"]:  # переименование категории обновляет и старые записи
+        old = TASK_BY_ID.get(x["id"])
+        if old and old["name"] != x["name"]:
+            con.execute("UPDATE events SET descr=? WHERE kind=?", (x["name"], x["id"]))
     save_tariffs(new)
     flash("Тарифы сохранены. Новые суммы действуют для будущих записей.", "ok")
     return redirect(url_for("tariffs"))
@@ -479,16 +549,17 @@ def add_quick():
     except ValueError:
         flash("Некорректная дата.", "err")
         return back()
-    if kind not in QUICK:
-        flash("Неизвестный тип записи.", "err")
+    task = TASK_BY_ID.get(kind)
+    if not task:
+        flash("Такой категории нет (возможно, её удалили) — обновите страницу.", "err")
         return back()
     con = get_db()
-    if kind == "homework" and con.execute(
-            "SELECT 1 FROM events WHERE date=? AND kind='homework'", (d,)).fetchone():
-        flash("За эту дату домашка уже записана.", "err")
+    if task["once_per_day"] and con.execute(
+            "SELECT 1 FROM events WHERE date=? AND kind=?", (d, kind)).fetchone():
+        flash(f"«{task['name']}»: за эту дату уже записано.", "err")
         return back()
-    add_event(con, d, kind, KIND_NAMES[kind], QUICK[kind])
-    flash(f"{KIND_NAMES[kind]}: {money(QUICK[kind], True)}", "ok")
+    add_event(con, d, kind, task["name"], task["amount"])
+    flash(f"{task['name']}: {money(task['amount'], True)}", "ok")
     return back()
 
 

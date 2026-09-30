@@ -8,36 +8,86 @@
   {%- endif -%}
 {%- endmacro %}
 {% block content %}
-{% if is_admin %}<form method="post" action="{{ url_for('tariffs_save') }}">
+{% if is_admin %}<form method="post" action="{{ url_for('tariffs_save') }}" data-confirm-del="Удалить отмеченные категории? Уже внесённые записи сохранятся в истории.">
 <input type="hidden" name="csrf" value="{{ csrf }}">{% endif %}
+
+<section class="card">
+  <h2>Домашка и дела по дому</h2>
+  {% if is_admin %}
+  <div class="scroll">
+  <table class="tt tasks">
+    <thead><tr><th>Категория</th><th class="r">Сумма за раз</th><th class="c">Раз в день</th><th class="c">Удалить</th></tr></thead>
+    <tbody id="taskBody">
+      {% for x in t.tasks %}
+      <tr>
+        <td><input type="hidden" name="task_idx" value="{{ x.id }}"><input type="hidden" name="task_{{ x.id }}_id" value="{{ x.id }}">
+          <input class="tin name" type="text" name="task_{{ x.id }}_name" value="{{ x.name }}" maxlength="40" required></td>
+        <td class="r"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task_{{ x.id }}_amount" value="{{ x.amount }}" min="-100000" max="100000" required>&nbsp;₽</span></td>
+        <td class="c"><input type="checkbox" name="task_{{ x.id }}_once" {{ 'checked' if x.once_per_day }} title="Не больше одной записи в день"></td>
+        <td class="c"><input type="checkbox" class="delbox" name="task_{{ x.id }}_del" title="Удалить категорию"></td>
+      </tr>
+      {% endfor %}
+      <tr class="newrow">
+        <td><input type="hidden" name="task_idx" value="n0"><input type="hidden" name="task_n0_id" value="">
+          <input class="tin name" type="text" name="task_n0_name" maxlength="40" placeholder="Новая категория…"></td>
+        <td class="r"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task_n0_amount" min="-100000" max="100000" placeholder="0">&nbsp;₽</span></td>
+        <td class="c"><input type="checkbox" name="task_n0_once"></td>
+        <td class="c"></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <template id="taskRowTpl">
+    <tr class="newrow">
+      <td><input type="hidden" name="task_idx" value="__i__"><input type="hidden" name="task___i___id" value="">
+        <input class="tin name" type="text" name="task___i___name" maxlength="40" placeholder="Новая категория…"></td>
+      <td class="r"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task___i___amount" min="-100000" max="100000" placeholder="0">&nbsp;₽</span></td>
+      <td class="c"><input type="checkbox" name="task___i___once"></td>
+      <td class="c"></td>
+    </tr>
+  </template>
+  <div class="row between mt">
+    <span class="tiny">«Раз в день» — повторная запись за ту же дату блокируется (как у домашки). Сумма может быть и отрицательной — это штрафная категория.</span>
+    <button type="button" class="btn ghost sm" id="addTask">+ ещё категория</button>
+  </div>
+  {% else %}
+  {% if t.tasks %}
+  <table class="tt">
+    {% for x in t.tasks %}
+    <tr><td>{{ x.name }}{% if x.once_per_day %} <span class="tiny">раз в день</span>{% else %} <span class="tiny">за раз</span>{% endif %}</td>
+        <td class="r"><b class="{{ 'p' if x.amount > 0 else 'n' if x.amount < 0 else 'z' }}">{{ x.amount|money }}</b></td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">Категорий пока нет.</p>{% endif %}
+  {% endif %}
+
+  <h2 class="mt2">Прочее</h2>
+  <table class="tt">
+    <tr><td>Выплата вне очереди, если накоплено больше</td><td class="r">{{ amt('limit', t.extra_payout_limit, 0) }}</td></tr>
+    <tr><td>Имя ученика</td><td class="r">{% if is_admin %}<input class="tin wide" type="text" name="student" value="{{ t.student }}" maxlength="40" required>{% else %}<b>{{ t.student }}</b>{% endif %}</td></tr>
+  </table>
+</section>
+
 <div class="grid">
   <section class="card">
-    <h2>Домашка и дела по дому</h2>
+    <h2>Оценки — обычные</h2>
     <table class="tt">
-      <tr><td>Вся домашка сдана до 18:00 <span class="tiny">в день</span></td><td class="r">{{ amt('homework', t.homework, 0) }}</td></tr>
-      <tr><td>Разгрузить посудомойку <span class="tiny">за раз</span></td><td class="r">{{ amt('dishes', t.dishes, 0) }}</td></tr>
-      <tr><td>Вынести мусор <span class="tiny">за раз</span></td><td class="r">{{ amt('trash', t.trash, 0) }}</td></tr>
-    </table>
-    <h2 class="mt">Прочее</h2>
-    <table class="tt">
-      <tr><td>Выплата вне очереди, если накоплено больше</td><td class="r">{{ amt('limit', t.extra_payout_limit, 0) }}</td></tr>
-      <tr><td>Имя ученика</td><td class="r">{% if is_admin %}<input class="tin wide" type="text" name="student" value="{{ t.student }}" maxlength="40" required>{% else %}<b>{{ t.student }}</b>{% endif %}</td></tr>
+      {% for g in grades %}
+      <tr><td>«{{ g }}»</td><td class="r">{{ amt('g' ~ g, t.grade[g], -100000) }}</td></tr>
+      {% endfor %}
     </table>
   </section>
-
   <section class="card">
-    <h2>Оценки</h2>
+    <h2>Оценки — контрольные</h2>
     <table class="tt">
-      <thead><tr><th>Балл</th><th class="r">Обычная</th><th class="r">Контрольная</th></tr></thead>
-      <tbody>
       {% for g in grades %}
-      <tr><td>«{{ g }}»</td><td class="r">{{ amt('g' ~ g, t.grade[g], -100000) }}</td><td class="r">{{ amt('c' ~ g, t.control[g], -100000) }}</td></tr>
+      <tr><td>«{{ g }}»</td><td class="r">{{ amt('c' ~ g, t.control[g], -100000) }}</td></tr>
       {% endfor %}
-      </tbody>
     </table>
     <div class="tiny mt">0 — без выплаты, минус — штраф.</div>
   </section>
 </div>
+
 {% if is_admin %}
 <div class="savebar">
   <span class="muted">Уже внесённые записи не пересчитываются — новые тарифы действуют только для будущих.</span>
@@ -45,6 +95,6 @@
 </div>
 </form>
 {% else %}
-<p class="tiny">Изменить тарифы можно после входа по паролю. Новые суммы действуют только для будущих записей.</p>
+<p class="tiny">Изменить тарифы и категории можно после входа по паролю. Новые суммы действуют только для будущих записей.</p>
 {% endif %}
 {% endblock %}

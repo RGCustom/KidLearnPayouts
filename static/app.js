@@ -5,6 +5,8 @@ document.addEventListener('submit', function (e) {
     var amt = f.elements.amount ? f.elements.amount.value : '';
     if (!confirm(msg.replace('{amount}', amt))) { e.preventDefault(); return; }
   }
+  var delMsg = f.dataset.confirmDel;
+  if (delMsg && f.querySelector('input.delbox:checked') && !confirm(delMsg)) { e.preventDefault(); return; }
   var b = e.submitter;
   if (b) setTimeout(function () { b.disabled = true; }, 0);
 });
@@ -24,4 +26,18 @@ document.addEventListener('submit', function (e) {
   }
   f.addEventListener('change', upd);
   upd();
+})();
+
+// добавление строк-категорий на странице тарифов
+(function () {
+  var btn = document.getElementById('addTask'), tpl = document.getElementById('taskRowTpl'),
+      body = document.getElementById('taskBody');
+  if (!btn || !tpl || !body) return;
+  var n = 0;
+  btn.addEventListener('click', function () {
+    n++;
+    body.insertAdjacentHTML('beforeend', tpl.innerHTML.replace(/__i__/g, 'n' + n));
+    var inp = body.lastElementChild.querySelector('input[type=text]');
+    if (inp) inp.focus();
+  });
 })();
