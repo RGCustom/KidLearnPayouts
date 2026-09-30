@@ -1,0 +1,15 @@
+# Для плагина Unraid «Docker Compose Manager» (или любого docker compose)
+services:
+  kidlearnpayouts:
+    image: ghcr.io/rgcustom/kidlearnpayouts:latest
+    container_name: kidlearnpayouts
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    environment:
+      ADMIN_PASSWORD: "СМЕНИТЕ_МЕНЯ"
+      TZ: "Europe/Moscow"
+      # COOKIE_SECURE: "1"   # если открываете через HTTPS (reverse proxy)
+      # TRUST_PROXY: "1"     # если стоит reverse proxy (NPM, Caddy, Traefik)
+    volumes:
+      - /mnt/user/appdata/kidlearnpayouts:/config

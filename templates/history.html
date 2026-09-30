@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}История{% endblock %}
+{% block content %}
+<div class="grid side">
+  <section class="card">
+    <h2>Все записи</h2>
+    {% if events %}
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Дата</th><th>Что</th><th class="r">Сумма</th><th>Статус</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for e in events %}
+      <tr class="{{ 'paid' if e.payout_id }}">
+        <td class="nw">{{ e.date|dow }} {{ e.date|dmy }}</td>
+        <td>{{ e.descr }}</td>
+        <td class="r nw {{ 'p' if e.amount > 0 else 'n' if e.amount < 0 else '' }}">{{ e.amount|money(True) }}</td>
+        <td class="nw">{% if e.payout_id %}<span class="pill">выплачено №{{ e.payout_id }}</span>{% else %}<span class="pill ok">в накоплении</span>{% endif %}</td>
+        {% if is_admin %}<td class="r">
+          {% if not e.payout_id and e.kind != 'carry' %}
+          <form method="post" action="{{ url_for('delete_event', event_id=e.id) }}" data-confirm="Удалить запись?">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><button class="x" title="Удалить">✕</button></form>
+          {% endif %}</td>{% endif %}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}<p class="muted">Пока пусто.</p>{% endif %}
+  </section>
+  <section class="card">
+    <h2>Выплаты</h2>
+    {% if pays %}
+    <ul class="list">
+      {% for p in pays %}<li><span class="d">№{{ p.id }}</span><span class="w">{{ p.date|dmy }}</span><span class="a p">{{ p.amount|money }}</span></li>{% endfor %}
+    </ul>
+    {% else %}<p class="muted">Выплат ещё не было.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

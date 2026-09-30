@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card hero {{ 'pos' if bal > 0 else 'neg' if bal < 0 else 'zero' }}">
+  <div class="label">Накоплено к выплате</div>
+  <div class="balance">{{ bal|money }}</div>
+  <div class="hint">{{ hint }}</div>
+  {% if bal < 0 %}<div class="hint warn">Накоплен штраф — он вычтется из ближайшего гонорара</div>{% endif %}
+  {% if over %}<div class="hint good">Накоплено больше {{ limit|money }} — можно требовать выплату вне очереди</div>
+  {% else %}
+  <div class="meter" title="До выплаты вне очереди"><span style="width: {{ progress }}%"></span></div>
+  <div class="tiny">до выплаты вне очереди: {{ (limit - bal if bal > 0 else limit)|money }}</div>
+  {% endif %}
+</section>
+
+{% if is_admin %}
+<div class="grid">
+  <section class="card">
+    <h2>Быстрые записи</h2>
+    <form method="post" action="{{ url_for('add_quick') }}" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field">Дата<input type="date" name="date" value="{{ today }}" required></label>
+      <div class="btns">
+        {% for kind, amount in quick.items() %}
+        <button class="btn tile" name="kind" value="{{ kind }}"><span>{{ quick_names[kind] }}</span><b>{{ amount|money(True) }}</b></button>
+        {% endfor %}
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Оценка</h2>
+    <form method="post" action="{{ url_for('add_grade') }}" class="stack" id="gradeForm" data-tariff='{{ tariff_json }}'>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="row">
+        <label class="field">Дата<input type="date" name="date" value="{{ today }}" required></label>
+        <label class="field">Балл<select name="grade">{% for g in grades %}<option value="{{ g }}">{{ g }}</option>{% endfor %}</select></label>
+      </div>
+      <div class="seg">
+        <label><input type="radio" name="kind" value="grade" checked><span>Обычная</span></label>
+        <label><input type="radio" name="kind" value="control"><span>Контрольная</span></label>
+      </div>
+      <div class="row between"><span class="preview" id="gradePreview"></span><button class="btn primary">Добавить</button></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Своя запись</h2>
+    <form method="post" action="{{ url_for('add_custom') }}" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="row">
+        <label class="field">Дата<input type="date" name="date" value="{{ today }}" required></label>
+        <label class="field">Сумма ±<input type="number" name="amount" step="1" placeholder="200 или -100" required></label>
+      </div>
+      <input type="text" name="note" maxlength="120" placeholder="Комментарий (по договорённости)">
+      <button class="btn">Добавить</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Выплата</h2>
+    {% if bal > 0 %}
+    <form method="post" action="{{ url_for('payout') }}" class="stack" data-confirm="Отметить выплату {amount} ₽?">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="expected" value="{{ bal }}">
+      <label class="field">Сумма выплаты, ₽ (можно меньше — остаток сохранится)
+        <input type="number" name="amount" min="1" max="{{ bal }}" value="{{ bal }}" required></label>
+      <button class="btn pay">Выплата произведена</button>
+    </form>
+    {% else %}
+    <p class="muted">Выплачивать нечего{{ ' — штраф перенесётся' if bal < 0 }}.</p>
+    {% endif %}
+    <form method="post" action="{{ url_for('undo') }}" data-confirm="Удалить последнюю запись из накопления?" class="mt">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn ghost sm">Отменить последнюю запись</button>
+    </form>
+  </section>
+</div>
+{% else %}
+<section class="card locked">
+  <div><b>Записи и выплаты закрыты паролем.</b> <span class="muted">Просмотр и статистика — без пароля.</span></div>
+  <a class="btn primary sm" href="{{ url_for('login') }}">Войти</a>
+</section>
+{% endif %}
+
+<div class="grid two">
+  <section class="card">
+    <h2>Последние записи <a class="more" href="{{ url_for('history') }}">все →</a></h2>
+    {% if recent %}
+    <ul class="list">
+      {% for e in recent %}
+      <li><span class="d">{{ e.date|dow }} {{ e.date|dmy }}</span><span class="w">{{ e.descr }}</span>
+        <span class="a {{ 'p' if e.amount > 0 else 'n' if e.amount < 0 else '' }}">{{ e.amount|money(True) }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">Пока пусто.</p>{% endif %}
+  </section>
+  <section class="card">
+    <h2>По неделям <a class="more" href="{{ url_for('stats') }}">статистика →</a></h2>
+    {{ chart }}
+  </section>
+</div>
+{% endblock %}

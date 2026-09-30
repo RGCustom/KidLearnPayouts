@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Статистика{% endblock %}
+{% block content %}
+<div class="kpis">
+  <div class="card kpi"><div class="label">Заработано</div><div class="num p">{{ s.earned|money }}</div></div>
+  <div class="card kpi"><div class="label">Штрафы</div><div class="num n">{{ s.fines|money }}</div></div>
+  <div class="card kpi"><div class="label">Выплачено</div><div class="num">{{ s.paid|money }}</div><div class="tiny">выплат: {{ s.pay_count }}{% if s.pay_count %}, в среднем {{ s.pay_avg|money }}{% endif %}</div></div>
+  <div class="card kpi"><div class="label">В накоплении</div><div class="num {{ 'p' if s.balance > 0 else 'n' if s.balance < 0 }}">{{ s.balance|money }}</div><div class="tiny">чистый итог: {{ s.net|money }}</div></div>
+</div>
+
+<section class="card"><h2>Результат по неделям <span class="muted sm">последние 12</span></h2>{{ chart }}</section>
+
+<div class="grid two">
+  <section class="card">
+    <h2>По категориям</h2>
+    {% if s.cats %}
+    <table><thead><tr><th>Категория</th><th class="r">Раз</th><th class="r">Сумма</th></tr></thead><tbody>
+      {% for name, n, total in s.cats %}<tr><td>{{ name }}</td><td class="r">{{ n }}</td><td class="r {{ 'p' if total > 0 else 'n' if total < 0 }}">{{ total|money(True) }}</td></tr>{% endfor %}
+    </tbody></table>
+    <div class="tiny mt">дней с записями: {{ s.active_days }}</div>
+    {% else %}<p class="muted">Пока пусто.</p>{% endif %}
+  </section>
+  {% for b in s.grade_blocks %}
+  <section class="card">
+    <h2>{{ b.title }} <span class="muted sm">{% if b.count %}всего {{ b.count }}, средняя {{ '%.1f'|format(b.avg) }}{% else %}пока нет{% endif %}</span></h2>
+    {% if b.count %}
+    <div class="hist">
+      {% for g, n, pct in b.bars %}<div class="hrow"><span class="g">{{ g }}</span><div class="hbar"><i style="width: {{ pct }}%"></i></div><span class="c">{{ n }}</span></div>{% endfor %}
+    </div>
+    {% else %}<p class="muted">Оценок ещё не было.</p>{% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

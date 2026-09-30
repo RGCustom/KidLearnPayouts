@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>KidLearnPayouts</Name>
+  <Repository>ghcr.io/rgcustom/kidlearnpayouts:latest</Repository>
+  <Registry>https://github.com/RGCustom/KidLearnPayouts/pkgs/container/kidlearnpayouts</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/RGCustom/KidLearnPayouts/issues</Support>
+  <Project>https://github.com/RGCustom/KidLearnPayouts</Project>
+  <Overview>Учёт по Договору № 1/2026: накопления, выплаты и статистика. Просмотр и статистика открыты всем, записи и выплаты — по паролю. Тёмная веб-тема.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/RGCustom/KidLearnPayouts/main/kidlearnpayouts.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/RGCustom/KidLearnPayouts/main/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI порт" Target="8080" Default="8090" Mode="tcp" Description="Порт веб-интерфейса" Type="Port" Display="always" Required="true" Mask="false">8090</Config>
+  <Config Name="Данные (appdata)" Target="/config" Default="/mnt/user/appdata/kidlearnpayouts" Mode="rw" Description="База uchet.db, tariffs.json, ключ сессий" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/kidlearnpayouts</Config>
+  <Config Name="Пароль для правок" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Нужен для записей, выплат и удаления. Просмотр и статистика — без пароля." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Часовой пояс" Target="TZ" Default="Europe/Moscow" Mode="" Description="Влияет на «сегодня» и пятницу выплат" Type="Variable" Display="always" Required="false" Mask="false">Europe/Moscow</Config>
+  <Config Name="HTTPS-куки" Target="COOKIE_SECURE" Default="0" Mode="" Description="1 — если заходите через HTTPS (reverse proxy)" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="За reverse proxy" Target="TRUST_PROXY" Default="0" Mode="" Description="1 — если перед контейнером стоит NPM/Caddy/Traefik" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="Часов до выхода" Target="SESSION_HOURS" Default="12" Mode="" Description="Сколько держится вход по паролю" Type="Variable" Display="advanced" Required="false" Mask="false">12</Config>
+</Container>
