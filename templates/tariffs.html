@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Тарифы{% endblock %}
+{% macro amt(name, v, lo) -%}
+  {%- if is_admin -%}
+    <span class="tin-wrap"><input class="tin" type="number" step="1" name="{{ name }}" value="{{ v }}" min="{{ lo }}" max="100000" required>&nbsp;₽</span>
+  {%- else -%}
+    <b class="{{ 'p' if v > 0 else 'n' if v < 0 else 'z' }}">{{ v|money(lo < 0) }}</b>
+  {%- endif -%}
+{%- endmacro %}
+{% block content %}
+{% if is_admin %}<form method="post" action="{{ url_for('tariffs_save') }}">
+<input type="hidden" name="csrf" value="{{ csrf }}">{% endif %}
+<div class="grid">
+  <section class="card">
+    <h2>Домашка и дела по дому</h2>
+    <table class="tt">
+      <tr><td>Вся домашка сдана до 18:00 <span class="tiny">в день</span></td><td class="r">{{ amt('homework', t.homework, 0) }}</td></tr>
+      <tr><td>Разгрузить посудомойку <span class="tiny">за раз</span></td><td class="r">{{ amt('dishes', t.dishes, 0) }}</td></tr>
+      <tr><td>Вынести мусор <span class="tiny">за раз</span></td><td class="r">{{ amt('trash', t.trash, 0) }}</td></tr>
+    </table>
+    <h2 class="mt">Прочее</h2>
+    <table class="tt">
+      <tr><td>Выплата вне очереди, если накоплено больше</td><td class="r">{{ amt('limit', t.extra_payout_limit, 0) }}</td></tr>
+      <tr><td>Имя ученика</td><td class="r">{% if is_admin %}<input class="tin wide" type="text" name="student" value="{{ t.student }}" maxlength="40" required>{% else %}<b>{{ t.student }}</b>{% endif %}</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Оценки</h2>
+    <table class="tt">
+      <thead><tr><th>Балл</th><th class="r">Обычная</th><th class="r">Контрольная</th></tr></thead>
+      <tbody>
+      {% for g in grades %}
+      <tr><td>«{{ g }}»</td><td class="r">{{ amt('g' ~ g, t.grade[g], -100000) }}</td><td class="r">{{ amt('c' ~ g, t.control[g], -100000) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="tiny mt">0 — без выплаты, минус — штраф.</div>
+  </section>
+</div>
+{% if is_admin %}
+<div class="savebar">
+  <span class="muted">Уже внесённые записи не пересчитываются — новые тарифы действуют только для будущих.</span>
+  <button class="btn primary">Сохранить тарифы</button>
+</div>
+</form>
+{% else %}
+<p class="tiny">Изменить тарифы можно после входа по паролю. Новые суммы действуют только для будущих записей.</p>
+{% endif %}
+{% endblock %}

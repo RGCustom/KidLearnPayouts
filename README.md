@@ -29,7 +29,7 @@ docker build -t kidlearnpayouts:latest https://github.com/RGCustom/KidLearnPayou
 ## Данные
 `/mnt/user/appdata/kidlearnpayouts/`:
 - `uchet.db` — записи и выплаты (бэкап = копия файла);
-- `tariffs.json` — тарифы и имя ученика (после правки перезапустить контейнер);
+- `tariffs.json` — тарифы и имя ученика (правятся на странице «Тарифы» после входа по паролю);
 - `secret.key` — ключ сессий.
 
 ## Безопасность

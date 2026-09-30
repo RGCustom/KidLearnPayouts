@@ -135,3 +135,14 @@ tr.paid td{color:#75829c}
 .hrow .c{width:26px; color:var(--text); font-variant-numeric:tabular-nums}
 .hbar{flex:1; height:10px; border-radius:6px; background:rgba(255,255,255,.05); overflow:hidden}
 .hbar i{display:block; height:100%; border-radius:6px; background:linear-gradient(90deg,var(--acc),var(--acc2))}
+
+/* тарифы */
+.tt td{padding:10px 8px}
+.tt td:first-child{width:auto}
+.tt .z{color:var(--muted)}
+.tt b{font-variant-numeric:tabular-nums; font-size:16px}
+.tin-wrap{white-space:nowrap; color:var(--muted)}
+.tin{width:110px; text-align:right; padding:7px 10px; font-variant-numeric:tabular-nums}
+.tin.wide{width:180px; text-align:left}
+.savebar{display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:14px 20px; margin-bottom:16px}

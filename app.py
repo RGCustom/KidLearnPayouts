@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -53,9 +54,6 @@ def load_tariffs():
     return merged
 
 
-T = load_tariffs()
-GRADES = sorted(T["grade"], reverse=True)
-
 KIND_NAMES = {
     "homework": "Домашка до 18:00",
     "dishes": "Посудомойка",
@@ -65,7 +63,32 @@ KIND_NAMES = {
     "custom": "По договорённости",
     "carry": "Перенос остатка",
 }
-QUICK = {"homework": T["homework"], "dishes": T["dishes"], "trash": T["trash"]}
+
+T, GRADES, QUICK = {}, [], {}
+_tariff_lock = threading.Lock()
+
+
+def apply_tariffs(t):
+    """Подменяет тарифы «на лету» (без перезапуска)."""
+    global T, GRADES, QUICK
+    T = t
+    GRADES = sorted(t["grade"], reverse=True)
+    QUICK = {"homework": t["homework"], "dishes": t["dishes"], "trash": t["trash"]}
+
+
+def save_tariffs(t):
+    data = dict(t)
+    data["grade"] = {str(k): v for k, v in t["grade"].items()}
+    data["control"] = {str(k): v for k, v in t["control"].items()}
+    with _tariff_lock:
+        tmp = TARIFF_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, TARIFF_PATH)
+        apply_tariffs(t)
+
+
+apply_tariffs(load_tariffs())
 
 # ───────────────────────────── ПРИЛОЖЕНИЕ ─────────────────────────────
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
@@ -364,6 +387,44 @@ def stats():
 @app.route("/healthz")
 def healthz():
     return "ok"
+
+
+# ───────────────────────────── ТАРИФЫ ─────────────────────────────
+@app.route("/tariffs")
+def tariffs():
+    return render_template("tariffs.html", t=T, grades=GRADES)
+
+
+@app.route("/tariffs", methods=["POST"], endpoint="tariffs_save")
+@admin_required
+def tariffs_save():
+    f = request.form
+
+    def num(name, lo=-100000, hi=100000):
+        v = int(f[name].replace("−", "-").replace(" ", "").replace("\u00a0", ""))
+        if not lo <= v <= hi:
+            raise ValueError
+        return v
+
+    try:
+        student = f.get("student", "").strip()[:40]
+        if not student:
+            raise ValueError
+        new = {
+            "student": student,
+            "homework": num("homework", 0),
+            "dishes": num("dishes", 0),
+            "trash": num("trash", 0),
+            "extra_payout_limit": num("limit", 0),
+            "grade": {g: num(f"g{g}") for g in GRADES},
+            "control": {g: num(f"c{g}") for g in GRADES},
+        }
+    except (ValueError, KeyError):
+        flash("Проверьте значения: суммы — целые числа (домашка и дела не меньше 0, оценки от −100000 до 100000).", "err")
+        return redirect(url_for("tariffs"))
+    save_tariffs(new)
+    flash("Тарифы сохранены. Новые суммы действуют для будущих записей.", "ok")
+    return redirect(url_for("tariffs"))
 
 
 # ───────────────────────────── ВХОД / ВЫХОД ─────────────────────────────
