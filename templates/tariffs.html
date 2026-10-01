@@ -22,16 +22,16 @@
       <tr>
         <td><input type="hidden" name="task_idx" value="{{ x.id }}"><input type="hidden" name="task_{{ x.id }}_id" value="{{ x.id }}">
           <input class="tin name" type="text" name="task_{{ x.id }}_name" value="{{ x.name }}" maxlength="40" required></td>
-        <td class="r"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task_{{ x.id }}_amount" value="{{ x.amount }}" min="-100000" max="100000" required>&nbsp;₽</span></td>
-        <td class="c"><input type="checkbox" name="task_{{ x.id }}_once" {{ 'checked' if x.once_per_day }} title="Не больше одной записи в день"></td>
-        <td class="c"><input type="checkbox" class="delbox" name="task_{{ x.id }}_del" title="Удалить категорию"></td>
+        <td class="r am" data-label="Сумма"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task_{{ x.id }}_amount" value="{{ x.amount }}" min="-100000" max="100000" required>&nbsp;₽</span></td>
+        <td class="c" data-label="Раз в день"><input type="checkbox" name="task_{{ x.id }}_once" {{ 'checked' if x.once_per_day }} title="Не больше одной записи в день"></td>
+        <td class="c" data-label="Удалить"><input type="checkbox" class="delbox" name="task_{{ x.id }}_del" title="Удалить категорию"></td>
       </tr>
       {% endfor %}
       <tr class="newrow">
         <td><input type="hidden" name="task_idx" value="n0"><input type="hidden" name="task_n0_id" value="">
           <input class="tin name" type="text" name="task_n0_name" maxlength="40" placeholder="Новая категория…"></td>
-        <td class="r"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task_n0_amount" min="-100000" max="100000" placeholder="0">&nbsp;₽</span></td>
-        <td class="c"><input type="checkbox" name="task_n0_once"></td>
+        <td class="r am" data-label="Сумма"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task_n0_amount" min="-100000" max="100000" placeholder="0">&nbsp;₽</span></td>
+        <td class="c" data-label="Раз в день"><input type="checkbox" name="task_n0_once"></td>
         <td class="c"></td>
       </tr>
     </tbody>
@@ -41,8 +41,8 @@
     <tr class="newrow">
       <td><input type="hidden" name="task_idx" value="__i__"><input type="hidden" name="task___i___id" value="">
         <input class="tin name" type="text" name="task___i___name" maxlength="40" placeholder="Новая категория…"></td>
-      <td class="r"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task___i___amount" min="-100000" max="100000" placeholder="0">&nbsp;₽</span></td>
-      <td class="c"><input type="checkbox" name="task___i___once"></td>
+      <td class="r am" data-label="Сумма"><span class="tin-wrap"><input class="tin" type="number" step="1" name="task___i___amount" min="-100000" max="100000" placeholder="0">&nbsp;₽</span></td>
+      <td class="c" data-label="Раз в день"><input type="checkbox" name="task___i___once"></td>
       <td class="c"></td>
     </tr>
   </template>

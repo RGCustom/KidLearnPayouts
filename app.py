@@ -22,7 +22,7 @@ from flask import (Flask, Response, flash, g, redirect, render_template, request
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-VERSION = "1.5"
+VERSION = "1.6"
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 DB_PATH = os.path.join(CONFIG_DIR, "uchet.db")

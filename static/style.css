@@ -157,3 +157,72 @@ tr.paid td{color:#75829c}
 .tt.tasks th{padding-left:8px}
 .row.between{flex-wrap:wrap}
 .row.between>.tiny{flex:1 1 260px}
+
+/* ───── мобильные доработки (iPhone / Safari) ───── */
+html{-webkit-text-size-adjust:100%; text-size-adjust:100%}
+.row>*,.field{min-width:0}
+input,select,textarea{min-width:0; max-width:100%}
+input[type=date],input[type=number],input[type=text],input[type=password],select{
+  -webkit-appearance:none; appearance:none; min-height:44px; line-height:1.2}
+input[type=date]{display:block; text-align:left; background-clip:padding-box}
+input[type=date]::-webkit-date-and-time-value{text-align:left; min-width:0; margin:0}
+input[type=checkbox]{-webkit-appearance:auto; appearance:auto; min-height:0}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%; background-size:5px 5px,5px 5px; background-repeat:no-repeat; padding-right:32px}
+
+@media (max-width:820px){
+  input,select,textarea{font-size:16px}   /* iOS не приближает страницу при фокусе */
+}
+@media (max-width:560px){
+  .wrap{padding-left:14px; padding-right:14px}
+  main.wrap{padding-top:16px}
+  .bar{gap:10px 12px; padding:10px 14px}
+  .brand{flex:1}
+  .auth .pill{display:none}
+  nav{display:grid; grid-template-columns:repeat(4,1fr); gap:2px; margin:0; order:3; width:100%; flex:none}
+  nav a{text-align:center; padding:8px 2px; font-size:13.5px}
+  .card{padding:16px 14px}
+  .balance{font-size:54px}
+  .row:not(.between){flex-direction:column; gap:10px}
+  .btns .tile{flex:1 1 calc(50% - 5px)}
+  .savebar .btn{width:100%}
+  .login{margin:30px auto}
+  .list .d{min-width:0; font-size:12px}
+  .list li{flex-wrap:wrap; gap:2px 12px}
+  .list .w{flex:1 1 100%; order:3}
+  .list .a{margin-left:auto}
+
+  /* строки категорий на странице тарифов — карточками */
+  .tt.tasks thead{display:none}
+  .tt.tasks,.tt.tasks tbody{display:block; width:100%}
+  .tt.tasks tr{display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:10px 14px;
+    padding:12px 0; border-bottom:1px solid var(--line)}
+  .tt.tasks td{display:block; padding:0; border:0; width:auto}
+  .tt.tasks td:first-child{grid-column:1/-1}
+  .tt.tasks td.am{text-align:left}
+  .tt.tasks td.c{text-align:left; display:flex; align-items:center; gap:8px; width:auto}
+  .tt.tasks td.c::before{content:attr(data-label); font-size:12px; color:var(--muted)}
+  .tt.tasks td.c:empty{display:none}
+  .tin.name{min-width:0}
+  .tin-wrap{display:flex; align-items:center; gap:6px}
+  .tin{width:100%; min-width:90px}
+  .tin.wide{width:150px}
+
+  .scroll table{min-width:0}
+  td,th{padding-left:6px; padding-right:6px}
+}
+
+.grid>*,.card{min-width:0}
+.scroll{max-width:100%}
+@media (max-width:560px){
+  table.hist,table.hist tbody{display:block; width:100%}
+  table.hist thead{display:none}
+  table.hist tr{display:grid; grid-template-columns:1fr auto; grid-template-areas:"date amount" "descr descr" "status del";
+    gap:4px 12px; padding:11px 0; border-bottom:1px solid var(--line); align-items:center}
+  table.hist td{display:block; padding:0; border:0; white-space:normal}
+  table.hist td:nth-child(1){grid-area:date; color:var(--muted); font-size:13px}
+  table.hist td:nth-child(2){grid-area:descr}
+  table.hist td:nth-child(3){grid-area:amount; font-weight:700; font-size:16px}
+  table.hist td:nth-child(4){grid-area:status}
+  table.hist td:nth-child(5){grid-area:del}
+}

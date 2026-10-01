@@ -6,7 +6,7 @@
     <h2>Все записи</h2>
     {% if events %}
     <div class="scroll">
-    <table>
+    <table class="hist">
       <thead><tr><th>Дата</th><th>Что</th><th class="r">Сумма</th><th>Статус</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for e in events %}
