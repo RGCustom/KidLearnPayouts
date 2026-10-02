@@ -24,6 +24,7 @@
       <a href="{{ url_for('history') }}" class="{{ 'on' if request.endpoint == 'history' }}">История</a>
       <a href="{{ url_for('stats') }}" class="{{ 'on' if request.endpoint == 'stats' }}">Статистика</a>
       <a href="{{ url_for('tariffs') }}" class="{{ 'on' if request.endpoint == 'tariffs' }}">Тарифы</a>
+      <a href="{{ url_for('contract') }}" class="{{ 'on' if request.endpoint == 'contract' }}">Договор</a>
     </nav>
     <div class="auth">
       {% if is_admin %}

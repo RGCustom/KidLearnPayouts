@@ -179,7 +179,7 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
   .bar{gap:10px 12px; padding:10px 14px}
   .brand{flex:1}
   .auth .pill{display:none}
-  nav{display:grid; grid-template-columns:repeat(4,1fr); gap:2px; margin:0; order:3; width:100%; flex:none}
+  nav{display:grid; grid-template-columns:repeat(5,1fr); gap:2px; margin:0; order:3; width:100%; flex:none}
   nav a{text-align:center; padding:8px 2px; font-size:13.5px}
   .card{padding:16px 14px}
   .balance{font-size:54px}
@@ -225,4 +225,26 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
   table.hist td:nth-child(3){grid-area:amount; font-weight:700; font-size:16px}
   table.hist td:nth-child(4){grid-area:status}
   table.hist td:nth-child(5){grid-area:del}
+}
+
+/* договор */
+.doc{background:#fff; color:#111; border-radius:var(--r); padding:40px 48px; margin:14px 0 16px;
+  font:15px/1.55 Georgia,"Times New Roman",serif}
+.doc h1{font-size:22px; text-align:center; margin:0 0 4px}
+.doc h3{font-size:14px; margin:20px 0 6px}
+.doc p,.doc ul{margin:6px 0}
+.doc .center{text-align:center}
+.doc .split{display:flex; justify-content:space-between}
+.doc .small{font-size:13px}
+.doc table.dt{border:1px solid #444; margin:8px 0}
+.doc .dt th,.doc .dt td{border:1px solid #444; padding:6px 10px; text-align:left; color:#111;
+  text-transform:none; letter-spacing:0; font-size:14px}
+.doc .dt th{background:#eee}
+.doc .sigs p{margin:18px 0}
+@media(max-width:560px){.doc{padding:20px 16px}}
+@media print{
+  body{background:#fff}
+  .top,.foot,.noprint,.flash{display:none!important}
+  main.wrap{padding:0; max-width:none}
+  .doc{padding:0; margin:0; border-radius:0}
 }

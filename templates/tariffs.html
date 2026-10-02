@@ -89,6 +89,39 @@
 </div>
 
 {% if is_admin %}
+{% set c = t.contract %}
+<section class="card">
+  <h2>Данные договора <a class="more" href="{{ url_for('contract') }}">открыть договор →</a></h2>
+  <div class="stack">
+    <div class="row">
+      <label class="field">№ договора<input type="text" name="number" value="{{ c.number }}" maxlength="20"></label>
+      <label class="field">Город<input type="text" name="city" value="{{ c.city }}" maxlength="40"></label>
+    </div>
+    <div class="row">
+      <label class="field">Дата договора<input type="date" name="cdate" value="{{ c.date }}" required></label>
+      <label class="field">Действует до<input type="date" name="cend" value="{{ c.end }}" required></label>
+    </div>
+    <label class="field">Ребёнок (ФИО полностью)<input type="text" name="student_full" value="{{ c.student_full }}" maxlength="80" required></label>
+    <div class="row">
+      <label class="field">Возраст<input type="number" name="student_age" value="{{ c.student_age }}" min="0" max="99" required></label>
+      <label class="field">Класс<input type="number" name="student_class" value="{{ c.student_class }}" min="0" max="12" required></label>
+    </div>
+    {% for i in (1, 2) %}
+    {% set p = c.parents[i - 1] if c.parents|length >= i else None %}
+    <div class="row">
+      <label class="field">Родитель {{ i }}{{ ' (необязательно)' if i == 2 }} — ФИО
+        <input type="text" name="p{{ i }}_name" value="{{ p.name if p }}" maxlength="80"></label>
+      <label class="field">Роль<input type="text" name="p{{ i }}_role" value="{{ p.role if p }}" maxlength="20" placeholder="Папа / Мама"></label>
+      <label class="field">Пол<select name="p{{ i }}_sex">
+        <option value="m" {{ 'selected' if p and not p.female }}>М</option>
+        <option value="f" {{ 'selected' if p and p.female }}>Ж</option></select></label>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if is_admin %}
 <div class="savebar">
   <span class="muted">Уже внесённые записи не пересчитываются — новые тарифы действуют только для будущих.</span>
   <button class="btn primary">Сохранить тарифы</button>

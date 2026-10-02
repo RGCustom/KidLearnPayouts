@@ -41,3 +41,8 @@ document.addEventListener('submit', function (e) {
     if (inp) inp.focus();
   });
 })();
+
+// кнопка «Печать» на странице договора
+document.addEventListener('click', function (e) {
+  if (e.target.closest('[data-print]')) window.print();
+});

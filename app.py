@@ -22,7 +22,7 @@ from flask import (Flask, Response, flash, g, redirect, render_template, request
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-VERSION = "1.6"
+VERSION = "1.7"
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 DB_PATH = os.path.join(CONFIG_DIR, "uchet.db")
@@ -37,10 +37,19 @@ DEFAULT_TASKS = [
     {"id": "dishes", "name": "Посудомойка", "amount": 50, "once_per_day": False},
     {"id": "trash", "name": "Мусор", "amount": 50, "once_per_day": False},
 ]
+DEFAULT_CONTRACT = {
+    "number": "1/2026", "city": "", "date": "2026-09-08", "end": "2027-05-31",
+    "student_full": "Якушев Максим Константинович", "student_age": 12, "student_class": 6,
+    "parents": [
+        {"name": "Якушев Константин Сергеевич", "role": "Папа", "female": False},
+        {"name": "Якушева Наталия Сергеевна", "role": "Мама", "female": True},
+    ],
+}
 DEFAULT_TARIFFS = {
     "student": "Максим",
     "tasks": DEFAULT_TASKS,
     "extra_payout_limit": 1000,
+    "contract": DEFAULT_CONTRACT,
     "grade":   {"10": 200, "9": 200, "8": 100, "7": 0, "6": 0, "5": 0, "4": 0, "3": -100, "2": -100, "1": -100},
     "control": {"10": 1000, "9": 600, "8": 300, "7": 0, "6": 0, "5": 0, "4": 0, "3": -300, "2": -300, "1": -300},
 }
@@ -74,6 +83,18 @@ def load_tariffs():
          "once_per_day": bool(x.get("once_per_day"))} for x in merged["tasks"]]
     for k in ("grade", "control"):
         merged[k] = {int(g_): int(v) for g_, v in merged[k].items()}
+    c = dict(DEFAULT_CONTRACT)
+    c.update(merged.get("contract") or {})
+    c["parents"] = [
+        {"name": str(p["name"]).strip()[:80], "role": str(p.get("role") or "Родитель")[:20],
+         "female": bool(p.get("female"))}
+        for p in (c.get("parents") or []) if str(p.get("name", "")).strip()][:2] or DEFAULT_CONTRACT["parents"][:1]
+    for k in ("student_age", "student_class"):
+        try:
+            c[k] = int(c[k])
+        except (TypeError, ValueError):
+            c[k] = DEFAULT_CONTRACT[k]
+    merged["contract"] = c
     if migrated:
         _write_tariffs(merged)
     return merged
@@ -440,6 +461,58 @@ def healthz():
 
 
 # ───────────────────────────── ТАРИФЫ ─────────────────────────────
+# ───────────────────────────── ДОГОВОР ─────────────────────────────
+MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+          "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+@app.template_filter("rudate")
+def rudate(iso):
+    d = datetime.strptime(iso, "%Y-%m-%d")
+    return f"«{d.day:02d}» {MONTHS[d.month - 1]} {d.year} г."
+
+
+@app.template_filter("fio")
+def fio(full):
+    p = full.split()
+    return " ".join([p[0]] + [x[0] + "." for x in p[1:]]) if p else ""
+
+
+def grade_columns(t):
+    """Склеивает подряд идущие баллы с одинаковыми суммами: [(метка, оценка, контрольная), ...]"""
+    groups = []
+    for g_ in sorted(t["grade"], reverse=True):
+        key = (t["grade"][g_], t["control"][g_])
+        if groups and groups[-1][3] == key:
+            groups[-1][1] = g_
+        else:
+            groups.append([g_, g_, key[0], key])
+    return [(f"«{hi}»" if hi == lo else f"{lo} – {hi}", k[0], k[1]) for hi, lo, _, k in groups]
+
+
+def contract_example(t):
+    parts = []
+    once = next((x for x in t["tasks"] if x["once_per_day"] and x["amount"] > 0), None)
+    chore = next((x for x in t["tasks"] if not x["once_per_day"] and x["amount"] > 0), None)
+    for x in (once, chore):
+        if x:
+            parts.append((f"«{x['name']}»", x["amount"]))
+    if t["grade"].get(9):
+        parts.append(("оценка «9»", t["grade"][9]))
+    if t["control"].get(10):
+        parts.append(("«10» за контрольную", t["control"][10]))
+    if len(parts) < 2:
+        return None
+    total = sum(a for _, a in parts)
+    return ", ".join(f"{n} ({money(a, True)})" for n, a in parts) + f" — итого {money(total)}"
+
+
+@app.route("/contract")
+def contract():
+    return render_template("contract.html", c=T["contract"], tasks=TASKS, limit=T["extra_payout_limit"],
+                           cols=grade_columns(T), example=contract_example(T))
+
+
 @app.route("/tariffs")
 def tariffs():
     return render_template("tariffs.html", t=T, grades=GRADES)
@@ -447,6 +520,34 @@ def tariffs():
 
 class FormError(ValueError):
     """Ошибка ввода с понятным пользователю текстом."""
+
+
+def parse_contract(f, to_int):
+    def d(name, what):
+        try:
+            return datetime.strptime(f.get(name, ""), "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            raise FormError(f"{what}: некорректная дата.")
+    parents = []
+    for i in (1, 2):
+        name = " ".join(f.get(f"p{i}_name", "").split())[:80]
+        if name:
+            parents.append({"name": name, "role": f.get(f"p{i}_role", "").strip()[:20] or "Родитель",
+                            "female": f.get(f"p{i}_sex") == "f"})
+    if not parents:
+        raise FormError("В договоре должен быть хотя бы один родитель.")
+    full = " ".join(f.get("student_full", "").split())[:80]
+    if not full:
+        raise FormError("Укажите полное имя ребёнка для договора.")
+    return {
+        "number": f.get("number", "").strip()[:20] or "1/2026",
+        "city": f.get("city", "").strip()[:40],
+        "date": d("cdate", "Дата договора"), "end": d("cend", "Срок действия"),
+        "student_full": full,
+        "student_age": to_int(f.get("student_age", ""), 0, 99, "Возраст"),
+        "student_class": to_int(f.get("student_class", ""), 0, 12, "Класс"),
+        "parents": parents,
+    }
 
 
 @app.route("/tariffs", methods=["POST"], endpoint="tariffs_save")
@@ -506,6 +607,7 @@ def tariffs_save():
             "extra_payout_limit": to_int(f.get("limit", ""), 0, 100000, "Выплата вне очереди"),
             "grade": {g: to_int(f.get(f"g{g}", ""), -100000, 100000, f"Оценка {g}") for g in GRADES},
             "control": {g: to_int(f.get(f"c{g}", ""), -100000, 100000, f"Контрольная {g}") for g in GRADES},
+            "contract": parse_contract(f, to_int),
         }
     except FormError as e:
         flash(str(e), "err")
