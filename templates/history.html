@@ -16,7 +16,7 @@
         <td class="r nw {{ 'p' if e.amount > 0 else 'n' if e.amount < 0 else '' }}">{{ e.amount|money(True) }}</td>
         <td class="nw">{% if e.payout_id %}<span class="pill">выплачено №{{ e.payout_id }}</span>{% else %}<span class="pill ok">в накоплении</span>{% endif %}</td>
         {% if is_admin %}<td class="r">
-          {% if not e.payout_id and e.kind != 'carry' %}
+          {% if not e.payout_id and e.type != 'carry' %}
           <form method="post" action="{{ url_for('delete_event', event_id=e.id) }}" data-confirm="Удалить запись?">
             <input type="hidden" name="csrf" value="{{ csrf }}"><button class="x" title="Удалить">✕</button></form>
           {% endif %}</td>{% endif %}

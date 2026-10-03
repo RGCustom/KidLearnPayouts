@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Учёт по Договору № 1/2026 — веб-версия для Unraid.
+Мотиватор (KidLearnPayouts) — учёт по Договору — веб-версия для Unraid.
 
-Просмотр и статистика открыты всем, кто дошёл до порта.
-Любые изменения (записи, выплаты, удаление) — только после ввода пароля ADMIN_PASSWORD.
+Версия 2.0, этап 1: новая схема БД (дети, пользователи, договоры, журнал…) и миграция с v1.7.
+Внешне приложение работает как раньше, но уже на новой структуре и с одним ребёнком.
+Просмотр и статистика пока открыты (их закроет этап 2), любые изменения — по паролю.
 """
+import copy
 import hmac
 import json
 import os
 import re
 import secrets
 import sqlite3
-import threading
+import sys
 import time
+import traceback
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from functools import wraps
@@ -21,17 +24,32 @@ from flask import (Flask, Response, flash, g, redirect, render_template, request
                    send_from_directory, session, url_for)
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
 
-VERSION = "1.7"
+VERSION = "2.0-dev1"
+SCHEMA_VERSION = 1
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 DB_PATH = os.path.join(CONFIG_DIR, "uchet.db")
-TARIFF_PATH = os.path.join(CONFIG_DIR, "tariffs.json")
+TARIFF_PATH = os.path.join(CONFIG_DIR, "tariffs.json")  # формат v1.7: читается только при миграции
+
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+RESET_ADMIN_PASSWORD = os.environ.get("RESET_ADMIN_PASSWORD", "0") == "1"
+SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "12"))
 
 if os.environ.get("TZ") and hasattr(time, "tzset"):
     time.tzset()
 
-# ───────────────────────────── ТАРИФЫ ─────────────────────────────
+
+def now_iso():
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def log(msg):
+    print(f"[БД] {msg}", flush=True)
+
+
+# ───────────────────────────── ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ ─────────────────────────────
 DEFAULT_TASKS = [
     {"id": "homework", "name": "Домашка до 18:00", "amount": 100, "once_per_day": True},
     {"id": "dishes", "name": "Посудомойка", "amount": 50, "once_per_day": False},
@@ -45,6 +63,7 @@ DEFAULT_CONTRACT = {
         {"name": "Якушева Наталия Сергеевна", "role": "Мама", "female": True},
     ],
 }
+DEFAULT_PAYOUT_WEEKDAY = 4  # пятница
 DEFAULT_TARIFFS = {
     "student": "Максим",
     "tasks": DEFAULT_TASKS,
@@ -54,85 +73,364 @@ DEFAULT_TARIFFS = {
     "control": {"10": 1000, "9": 600, "8": 300, "7": 0, "6": 0, "5": 0, "4": 0, "3": -300, "2": -300, "1": -300},
 }
 
-
-def _write_tariffs(t):
-    data = dict(t)
-    data["grade"] = {str(k): v for k, v in t["grade"].items()}
-    data["control"] = {str(k): v for k, v in t["control"].items()}
-    tmp = TARIFF_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, TARIFF_PATH)
-
-
-def load_tariffs():
-    if not os.path.exists(TARIFF_PATH):
-        with open(TARIFF_PATH, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_TARIFFS, f, ensure_ascii=False, indent=2)
-    with open(TARIFF_PATH, encoding="utf-8") as f:
-        t = json.load(f)
-    merged = dict(DEFAULT_TARIFFS)
-    merged.update(t)
-    migrated = "tasks" not in t
-    if migrated:  # старый формат: homework / dishes / trash отдельными ключами
-        merged["tasks"] = [dict(x, amount=int(t.get(x["id"], x["amount"]))) for x in DEFAULT_TASKS]
-        for k in ("homework", "dishes", "trash"):
-            merged.pop(k, None)
-    merged["tasks"] = [
-        {"id": str(x["id"]), "name": str(x["name"])[:40], "amount": int(x["amount"]),
-         "once_per_day": bool(x.get("once_per_day"))} for x in merged["tasks"]]
-    for k in ("grade", "control"):
-        merged[k] = {int(g_): int(v) for g_, v in merged[k].items()}
-    c = dict(DEFAULT_CONTRACT)
-    c.update(merged.get("contract") or {})
-    c["parents"] = [
-        {"name": str(p["name"]).strip()[:80], "role": str(p.get("role") or "Родитель")[:20],
-         "female": bool(p.get("female"))}
-        for p in (c.get("parents") or []) if str(p.get("name", "")).strip()][:2] or DEFAULT_CONTRACT["parents"][:1]
-    for k in ("student_age", "student_class"):
-        try:
-            c[k] = int(c[k])
-        except (TypeError, ValueError):
-            c[k] = DEFAULT_CONTRACT[k]
-    merged["contract"] = c
-    if migrated:
-        _write_tariffs(merged)
-    return merged
-
-
 KIND_NAMES = {
     "grade": "Оценки",
     "control": "Контрольные",
     "custom": "По договорённости",
     "carry": "Перенос остатка",
 }
-
-T, GRADES, TASKS, TASK_BY_ID = {}, [], [], {}
-_tariff_lock = threading.Lock()
+SPECIAL_TYPES = ("grade", "control", "custom", "carry")
 
 
-def apply_tariffs(t):
-    """Подменяет тарифы «на лету» (без перезапуска)."""
-    global T, GRADES, TASKS, TASK_BY_ID
-    T = t
-    GRADES = sorted(t["grade"], reverse=True)
-    TASKS = t["tasks"]
-    TASK_BY_ID = {x["id"]: x for x in TASKS}
+# ───────────────────────────── СХЕМА БД (v2) ─────────────────────────────
+SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS meta(
+        key TEXT PRIMARY KEY, value TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS login_attempts(
+        scope TEXT NOT NULL, key TEXT NOT NULL,
+        fails INTEGER NOT NULL DEFAULT 0, locked_until REAL NOT NULL DEFAULT 0, updated REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY(scope, key))""",
+    """CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        login TEXT NOT NULL COLLATE NOCASE,
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('admin','adult')),
+        password_hash TEXT NOT NULL,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
+        can_payout INTEGER NOT NULL DEFAULT 0,
+        all_children INTEGER NOT NULL DEFAULT 1,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        last_login TEXT)""",
+    """CREATE TABLE IF NOT EXISTS children(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        payout_weekday INTEGER NOT NULL DEFAULT 4,
+        extra_payout_limit INTEGER NOT NULL DEFAULT 1000,
+        grade_min INTEGER NOT NULL DEFAULT 1,
+        grade_max INTEGER NOT NULL DEFAULT 10,
+        link_enabled INTEGER NOT NULL DEFAULT 0,
+        pin_enabled INTEGER NOT NULL DEFAULT 0,
+        link_token TEXT,
+        pin_hash TEXT,
+        pin_fails INTEGER NOT NULL DEFAULT 0,
+        pin_locked_until REAL NOT NULL DEFAULT 0,
+        is_archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS user_children(
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+        PRIMARY KEY(user_id, child_id))""",
+    """CREATE TABLE IF NOT EXISTS sessions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_hash TEXT NOT NULL,
+        subject_type TEXT NOT NULL CHECK(subject_type IN ('user','child')),
+        subject_id INTEGER NOT NULL,
+        created INTEGER NOT NULL, last_seen INTEGER NOT NULL, expires INTEGER NOT NULL,
+        remember INTEGER NOT NULL DEFAULT 0,
+        device TEXT)""",
+    """CREATE TABLE IF NOT EXISTS tasks(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        child_id INTEGER NOT NULL REFERENCES children(id),
+        name TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        once_per_day INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_deleted INTEGER NOT NULL DEFAULT 0)""",
+    """CREATE TABLE IF NOT EXISTS grade_tariffs(
+        child_id INTEGER NOT NULL REFERENCES children(id),
+        type TEXT NOT NULL CHECK(type IN ('grade','control')),
+        grade INTEGER NOT NULL,
+        amount INTEGER NOT NULL,
+        PRIMARY KEY(child_id, type, grade))""",
+    """CREATE TABLE IF NOT EXISTS payouts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        child_id INTEGER NOT NULL REFERENCES children(id),
+        date TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        user_id INTEGER REFERENCES users(id))""",
+    """CREATE TABLE IF NOT EXISTS events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        child_id INTEGER NOT NULL REFERENCES children(id),
+        date TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('task','grade','control','custom','carry')),
+        task_id INTEGER REFERENCES tasks(id),
+        descr TEXT NOT NULL,
+        grade INTEGER,
+        amount INTEGER NOT NULL,
+        payout_id INTEGER REFERENCES payouts(id),
+        author INTEGER REFERENCES users(id),
+        created_at TEXT)""",
+    """CREATE TABLE IF NOT EXISTS contracts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        child_id INTEGER NOT NULL REFERENCES children(id),
+        number TEXT NOT NULL,
+        city TEXT NOT NULL DEFAULT '',
+        date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        student_full TEXT NOT NULL,
+        student_age INTEGER,
+        student_class INTEGER,
+        rules_text TEXT)""",
+    """CREATE TABLE IF NOT EXISTS contract_parties(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        female INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL DEFAULT 0)""",
+    """CREATE TABLE IF NOT EXISTS contract_revisions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+        effective_from TEXT NOT NULL,
+        snapshot TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_by INTEGER REFERENCES users(id))""",
+    """CREATE TABLE IF NOT EXISTS audit_log(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        user_id INTEGER,
+        actor TEXT,
+        child_id INTEGER,
+        action TEXT NOT NULL,
+        details TEXT)""",
+    "CREATE INDEX IF NOT EXISTS ix_events_child_payout ON events(child_id, payout_id)",
+    "CREATE INDEX IF NOT EXISTS ix_events_child_date ON events(child_id, date)",
+    "CREATE INDEX IF NOT EXISTS ix_payouts_child ON payouts(child_id)",
+    "CREATE INDEX IF NOT EXISTS ix_tasks_child ON tasks(child_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_sessions_token ON sessions(token_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_login ON users(login)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_children_link ON children(link_token) WHERE link_token IS NOT NULL",
+]
 
 
-def save_tariffs(t):
-    with _tariff_lock:
-        _write_tariffs(t)
-        apply_tariffs(t)
+# ───────────────────────────── ЧТЕНИЕ СТАРОГО tariffs.json (только для миграции) ─────────────────────────────
+def read_legacy_tariffs():
+    """Читает tariffs.json формата v1.7 (и более старого). Файл НЕ изменяется.
+    Если файла нет — берутся значения по умолчанию."""
+    if not os.path.exists(TARIFF_PATH):
+        return copy.deepcopy(DEFAULT_TARIFFS)
+    try:
+        with open(TARIFF_PATH, encoding="utf-8") as f:
+            t = json.load(f)
+        if not isinstance(t, dict):
+            raise ValueError("ожидался JSON-объект")
+        merged = copy.deepcopy(DEFAULT_TARIFFS)
+        merged.update(t)
+        if "tasks" not in t:  # старый формат: homework / dishes / trash отдельными ключами
+            merged["tasks"] = [dict(x, amount=int(t.get(x["id"], x["amount"]))) for x in DEFAULT_TASKS]
+            for k in ("homework", "dishes", "trash"):
+                merged.pop(k, None)
+        merged["tasks"] = [
+            {"id": str(x["id"]), "name": str(x["name"])[:40], "amount": int(x["amount"]),
+             "once_per_day": bool(x.get("once_per_day"))} for x in merged["tasks"]]
+        for k in ("grade", "control"):
+            merged[k] = {int(g_): int(v) for g_, v in merged[k].items()}
+        merged["student"] = str(merged["student"]).strip()[:40] or "Ребёнок"
+        merged["extra_payout_limit"] = int(merged["extra_payout_limit"])
+        c = copy.deepcopy(DEFAULT_CONTRACT)
+        c.update(merged.get("contract") or {})
+        c["parents"] = [
+            {"name": str(p["name"]).strip()[:80], "role": str(p.get("role") or "Родитель")[:20],
+             "female": bool(p.get("female"))}
+            for p in (c.get("parents") or []) if str(p.get("name", "")).strip()][:2] or DEFAULT_CONTRACT["parents"][:1]
+        for k in ("student_age", "student_class"):
+            try:
+                c[k] = int(c[k])
+            except (TypeError, ValueError):
+                c[k] = DEFAULT_CONTRACT[k]
+        merged["contract"] = c
+        return merged
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        raise RuntimeError(f"не удалось прочитать {TARIFF_PATH}: {e}")
 
 
-apply_tariffs(load_tariffs())
+# ───────────────────────────── МИГРАЦИИ ─────────────────────────────
+def create_child(con, t, sort_order=0):
+    """Создаёт ребёнка с тарифами, категориями и договором (+ первая редакция).
+    Возвращает (child_id, {старый строковый id категории: новый числовой id})."""
+    grades = sorted(t["grade"])
+    cid = con.execute(
+        "INSERT INTO children(name,sort_order,payout_weekday,extra_payout_limit,grade_min,grade_max,created_at)"
+        " VALUES(?,?,?,?,?,?,?)",
+        (t["student"], sort_order, DEFAULT_PAYOUT_WEEKDAY, t["extra_payout_limit"],
+         grades[0] if grades else 1, grades[-1] if grades else 10, now_iso())).lastrowid
+    task_map = {}
+    for pos, x in enumerate(t["tasks"]):
+        task_map[x["id"]] = con.execute(
+            "INSERT INTO tasks(child_id,name,amount,once_per_day,sort_order) VALUES(?,?,?,?,?)",
+            (cid, x["name"], x["amount"], int(x["once_per_day"]), pos)).lastrowid
+    for typ in ("grade", "control"):
+        for g_, v in t[typ].items():
+            con.execute("INSERT INTO grade_tariffs(child_id,type,grade,amount) VALUES(?,?,?,?)", (cid, typ, g_, v))
+    c = t["contract"]
+    ctr = con.execute(
+        "INSERT INTO contracts(child_id,number,city,date,end_date,student_full,student_age,student_class)"
+        " VALUES(?,?,?,?,?,?,?,?)",
+        (cid, c["number"], c["city"], c["date"], c["end"], c["student_full"], c["student_age"],
+         c["student_class"])).lastrowid
+    for pos, p in enumerate(c["parents"]):
+        con.execute("INSERT INTO contract_parties(contract_id,name,role,female,sort_order) VALUES(?,?,?,?,?)",
+                    (ctr, p["name"], p["role"], int(p["female"]), pos))
+    snapshot = {
+        "tasks": [{"name": x["name"], "amount": x["amount"], "once_per_day": x["once_per_day"]} for x in t["tasks"]],
+        "grade": {str(k): v for k, v in t["grade"].items()},
+        "control": {str(k): v for k, v in t["control"].items()},
+        "payout_weekday": DEFAULT_PAYOUT_WEEKDAY, "extra_payout_limit": t["extra_payout_limit"],
+        "grade_min": grades[0] if grades else 1, "grade_max": grades[-1] if grades else 10,
+    }
+    con.execute("INSERT INTO contract_revisions(contract_id,effective_from,snapshot,created_at) VALUES(?,?,?,?)",
+                (ctr, c["date"], json.dumps(snapshot, ensure_ascii=False), now_iso()))
+    return cid, task_map
+
+
+def copy_legacy_data(con, cid, task_map):
+    """Переносит events/payouts из таблиц v1.7 (events_v17, payouts_v17) и проверяет, что ничего не потерялось."""
+    for p in con.execute("SELECT id,date,amount FROM payouts_v17 ORDER BY id").fetchall():
+        con.execute("INSERT INTO payouts(id,child_id,date,amount,user_id) VALUES(?,?,?,?,NULL)",
+                    (p["id"], cid, p["date"], p["amount"]))
+    old = con.execute("SELECT id,date,kind,descr,grade,amount,payout_id FROM events_v17 ORDER BY id").fetchall()
+
+    # категории, которых уже нет в тарифах, но на которые ссылаются события, — восстанавливаем как удалённые
+    last_descr = {}
+    for r in sorted(old, key=lambda r: (r["date"], r["id"])):
+        last_descr[r["kind"]] = r["descr"]
+    for kind, descr in last_descr.items():
+        if kind not in SPECIAL_TYPES and kind not in task_map:
+            task_map[kind] = con.execute(
+                "INSERT INTO tasks(child_id,name,amount,once_per_day,sort_order,is_deleted) VALUES(?,?,?,?,?,1)",
+                (cid, descr, 0, 0, len(task_map))).lastrowid
+            log(f"категория «{descr}» (id {kind}) восстановлена как удалённая")
+
+    for r in old:
+        if r["kind"] in SPECIAL_TYPES:
+            typ, task_id = r["kind"], None
+        else:
+            typ, task_id = "task", task_map[r["kind"]]
+        con.execute(
+            "INSERT INTO events(id,child_id,date,type,task_id,descr,grade,amount,payout_id,author,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL)",
+            (r["id"], cid, r["date"], typ, task_id, r["descr"], r["grade"], r["amount"], r["payout_id"]))
+
+    # контроль целостности: количество, суммы и накопление должны совпасть с v1.7
+    def one(sql):
+        return con.execute(sql).fetchone()[0]
+    checks = [
+        ("число записей", one("SELECT COUNT(*) FROM events_v17"), one("SELECT COUNT(*) FROM events")),
+        ("сумма записей", one("SELECT COALESCE(SUM(amount),0) FROM events_v17"),
+         one("SELECT COALESCE(SUM(amount),0) FROM events")),
+        ("накопление", one("SELECT COALESCE(SUM(amount),0) FROM events_v17 WHERE payout_id IS NULL"),
+         one("SELECT COALESCE(SUM(amount),0) FROM events WHERE payout_id IS NULL")),
+        ("число выплат", one("SELECT COUNT(*) FROM payouts_v17"), one("SELECT COUNT(*) FROM payouts")),
+        ("сумма выплат", one("SELECT COALESCE(SUM(amount),0) FROM payouts_v17"),
+         one("SELECT COALESCE(SUM(amount),0) FROM payouts")),
+    ]
+    for what, a, b in checks:
+        if a != b:
+            raise RuntimeError(f"проверка после переноса не пройдена: {what} было {a}, стало {b}")
+    log(f"перенесено записей: {len(old)}, выплат: {checks[3][1]}, накопление: {checks[2][1]} ₽")
+
+
+def run_migrations():
+    """Приводит БД к текущей схеме. Свежая установка и v1.7 обрабатываются одним путём."""
+    con = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
+    con.row_factory = sqlite3.Row
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "meta" in tables:
+            row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            ver = int(row[0]) if row else 0
+            if ver == SCHEMA_VERSION:
+                return
+            msg = ("база создана более новой версией приложения" if ver > SCHEMA_VERSION
+                   else "неизвестная версия схемы")
+            log(f"ОШИБКА: {msg} (схема {ver}, приложение ждёт {SCHEMA_VERSION}). Запуск остановлен, БД не тронута.")
+            sys.exit(1)
+
+        legacy = "events" in tables and "child_id" not in [r[1] for r in con.execute("PRAGMA table_info(events)")]
+        bak = None
+        try:
+            if legacy:
+                bak = f"{DB_PATH}.bak-v1.7-{datetime.now():%Y%m%d-%H%M%S}"
+                dst = sqlite3.connect(bak)
+                con.backup(dst)  # корректно и при включённом WAL
+                dst.close()
+                log(f"найдена база v1.7, резервная копия: {bak}")
+            tariffs = read_legacy_tariffs()
+
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                if legacy:
+                    con.execute("ALTER TABLE events RENAME TO events_v17")
+                    con.execute("ALTER TABLE payouts RENAME TO payouts_v17")
+                for stmt in SCHEMA:
+                    con.execute(stmt)
+                cid, task_map = create_child(con, tariffs)
+                if legacy:
+                    copy_legacy_data(con, cid, task_map)
+                    con.execute("DROP TABLE events_v17")
+                    con.execute("DROP TABLE payouts_v17")
+                con.execute("INSERT INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+                con.execute("INSERT INTO meta(key,value) VALUES('created_by_version',?)", (VERSION,))
+                if legacy:
+                    con.execute("INSERT INTO meta(key,value) VALUES('migrated_from',?)", ("1.7",))
+                    con.execute("INSERT INTO meta(key,value) VALUES('migrated_at',?)", (now_iso(),))
+                con.execute("COMMIT")
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+        except Exception as e:
+            traceback.print_exc()
+            log(f"ОШИБКА МИГРАЦИИ: {e}")
+            log("Все изменения откатены, база осталась в прежнем виде."
+                + (f" Резервная копия: {bak}" if bak else ""))
+            sys.exit(1)
+        log("миграция на схему v%d завершена" % SCHEMA_VERSION if legacy
+            else "создана новая база (схема v%d)" % SCHEMA_VERSION)
+    finally:
+        con.close()
+
+
+def ensure_admin():
+    """Первый администратор создаётся из ADMIN_PASSWORD. Дальше пароль молча НЕ перезаписывается:
+    для аварийного сброса нужен явный флаг RESET_ADMIN_PASSWORD=1 (вместе с ADMIN_PASSWORD)."""
+    con = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
+    try:
+        row = con.execute("SELECT id,password_hash FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+        if row is None:
+            if ADMIN_PASSWORD:
+                con.execute(
+                    "INSERT INTO users(login,display_name,role,password_hash,must_change_password,can_payout,"
+                    "all_children,is_active,created_at) VALUES('admin','Администратор','admin',?,0,1,1,1,?)",
+                    (generate_password_hash(ADMIN_PASSWORD), now_iso()))
+                log("создан администратор (логин admin) из ADMIN_PASSWORD")
+            else:
+                log("ВНИМАНИЕ: администратора нет и ADMIN_PASSWORD не задан — доступен только просмотр.")
+        elif RESET_ADMIN_PASSWORD:
+            if not ADMIN_PASSWORD:
+                log("RESET_ADMIN_PASSWORD=1, но ADMIN_PASSWORD пуст — пароль не изменён.")
+            elif not check_password_hash(row[1], ADMIN_PASSWORD):
+                con.execute("UPDATE users SET password_hash=?, is_active=1, must_change_password=0 WHERE id=?",
+                            (generate_password_hash(ADMIN_PASSWORD), row[0]))
+                log("пароль администратора СБРОШЕН из ADMIN_PASSWORD. Уберите RESET_ADMIN_PASSWORD после входа.")
+    finally:
+        con.close()
+
+
+try:
+    run_migrations()
+    ensure_admin()
+except SystemExit:
+    raise
+except Exception as e:  # на случай ошибок вне транзакции миграции
+    traceback.print_exc()
+    log(f"ОШИБКА ИНИЦИАЛИЗАЦИИ БД: {e}")
+    sys.exit(1)
+
 
 # ───────────────────────────── ПРИЛОЖЕНИЕ ─────────────────────────────
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-SESSION_HOURS = int(os.environ.get("SESSION_HOURS", "12"))
-
-
 def _secret_key():
     path = os.path.join(CONFIG_DIR, "secret.key")
     if not os.path.exists(path):
@@ -141,8 +439,13 @@ def _secret_key():
         os.chmod(path, 0o600)
     with open(path) as f:
         base = f.read().strip()
-    # смена пароля автоматически разлогинивает все сессии
-    return hmac.new(base.encode(), ADMIN_PASSWORD.encode(), "sha256").hexdigest()
+    con = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        row = con.execute("SELECT password_hash FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+    finally:
+        con.close()
+    # смена пароля администратора автоматически разлогинивает все сессии
+    return hmac.new(base.encode(), (row[0] if row else "").encode(), "sha256").hexdigest()
 
 
 app = Flask(__name__)
@@ -174,44 +477,75 @@ def close_db(_exc):
         con.close()
 
 
-def init_db():
-    con = sqlite3.connect(DB_PATH, isolation_level=None)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("""CREATE TABLE IF NOT EXISTS payouts(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, amount INTEGER NOT NULL)""")
-    con.execute("""CREATE TABLE IF NOT EXISTS events(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL, kind TEXT NOT NULL, descr TEXT NOT NULL,
-        grade INTEGER, amount INTEGER NOT NULL,
-        payout_id INTEGER REFERENCES payouts(id))""")
-    con.close()
+# ───────────────────────────── НАСТРОЙКИ РЕБЁНКА (единая точка чтения из БД) ─────────────────────────────
+def child_config(con, child_id):
+    """Тарифы, категории и договор ребёнка одним словарём. Заменяет прежние глобальные T/TASKS/GRADES."""
+    ch = con.execute("SELECT * FROM children WHERE id=?", (child_id,)).fetchone()
+    if ch is None:
+        return None
+    tasks = [{"id": r["id"], "name": r["name"], "amount": r["amount"], "once_per_day": bool(r["once_per_day"])}
+             for r in con.execute("SELECT * FROM tasks WHERE child_id=? AND is_deleted=0 ORDER BY sort_order, id",
+                                  (child_id,))]
+    tariff = {"grade": {}, "control": {}}
+    for r in con.execute("SELECT type,grade,amount FROM grade_tariffs WHERE child_id=?", (child_id,)):
+        tariff[r["type"]][r["grade"]] = r["amount"]
+    crow = con.execute("SELECT * FROM contracts WHERE child_id=?", (child_id,)).fetchone()
+    if crow:
+        parents = [{"name": p["name"], "role": p["role"], "female": bool(p["female"])}
+                   for p in con.execute("SELECT * FROM contract_parties WHERE contract_id=? ORDER BY sort_order, id",
+                                        (crow["id"],))]
+        contract = {
+            "number": crow["number"], "city": crow["city"], "date": crow["date"], "end": crow["end_date"],
+            "student_full": crow["student_full"], "student_age": crow["student_age"],
+            "student_class": crow["student_class"],
+            "parents": parents or copy.deepcopy(DEFAULT_CONTRACT["parents"][:1]),
+        }
+    else:
+        contract = copy.deepcopy(DEFAULT_CONTRACT)
+    return {
+        "id": ch["id"], "student": ch["name"], "tasks": tasks,
+        "extra_payout_limit": ch["extra_payout_limit"], "payout_weekday": ch["payout_weekday"],
+        "grade": tariff["grade"], "control": tariff["control"],
+        "grades": sorted(tariff["grade"], reverse=True),
+        "contract": contract,
+    }
 
 
-init_db()
+def current_child():
+    """Текущий ребёнок запроса. Этап 1: единственный (первый неархивный). Переключатель — этап 3."""
+    if "child" not in g:
+        con = get_db()
+        row = (con.execute("SELECT id FROM children WHERE is_archived=0 ORDER BY sort_order, id LIMIT 1").fetchone()
+               or con.execute("SELECT id FROM children ORDER BY sort_order, id LIMIT 1").fetchone())
+        g.child = child_config(con, row["id"])
+    return g.child
 
 
-def balance(con):
-    return con.execute("SELECT COALESCE(SUM(amount),0) FROM events WHERE payout_id IS NULL").fetchone()[0]
+def balance(con, cid):
+    return con.execute("SELECT COALESCE(SUM(amount),0) FROM events WHERE child_id=? AND payout_id IS NULL",
+                       (cid,)).fetchone()[0]
 
 
-def add_event(con, d, kind, descr, amount, grade=None):
-    con.execute("INSERT INTO events(date,kind,descr,grade,amount) VALUES(?,?,?,?,?)",
-                (d, kind, descr, grade, amount))
+def add_event(con, cid, d, etype, descr, amount, grade=None, task_id=None, author=None):
+    con.execute(
+        "INSERT INTO events(child_id,date,type,task_id,descr,grade,amount,author,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        (cid, d, etype, task_id, descr, grade, amount, author, now_iso()))
 
 
-def do_payout(con, amount, expected):
+def do_payout(con, cid, amount, expected, user_id=None):
     con.execute("BEGIN IMMEDIATE")
     try:
-        bal = balance(con)
+        bal = balance(con, cid)
         if bal != expected:
             raise ValueError("Сумма в накоплении изменилась — проверьте и повторите.")
         if not 1 <= amount <= bal:
             raise ValueError("Сумма выплаты должна быть от 1 ₽ до накопленной.")
         today = date.today().isoformat()
-        pid = con.execute("INSERT INTO payouts(date,amount) VALUES(?,?)", (today, amount)).lastrowid
-        con.execute("UPDATE events SET payout_id=? WHERE payout_id IS NULL", (pid,))
+        pid = con.execute("INSERT INTO payouts(child_id,date,amount,user_id) VALUES(?,?,?,?)",
+                          (cid, today, amount, user_id)).lastrowid
+        con.execute("UPDATE events SET payout_id=? WHERE child_id=? AND payout_id IS NULL", (pid, cid))
         if amount < bal:
-            add_event(con, today, "carry", "Остаток после частичной выплаты", bal - amount)
+            add_event(con, cid, today, "carry", "Остаток после частичной выплаты", bal - amount, author=user_id)
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
@@ -223,8 +557,8 @@ def monday(d):
     return d - timedelta(days=d.weekday())
 
 
-def weekly_series(con, weeks):
-    rows = con.execute("SELECT date, amount FROM events WHERE kind!='carry'").fetchall()
+def weekly_series(con, cid, weeks):
+    rows = con.execute("SELECT date, amount FROM events WHERE child_id=? AND type!='carry'", (cid,)).fetchall()
     acc = defaultdict(int)
     for r in rows:
         acc[monday(datetime.strptime(r["date"], "%Y-%m-%d").date())] += r["amount"]
@@ -232,23 +566,28 @@ def weekly_series(con, weeks):
     return [(start - timedelta(weeks=i), acc.get(start - timedelta(weeks=i), 0)) for i in range(weeks - 1, -1, -1)]
 
 
-def compute_stats(con):
-    rows = con.execute("SELECT date,kind,grade,amount,descr FROM events WHERE kind!='carry' ORDER BY date, id").fetchall()
+def compute_stats(con, cfg):
+    cid = cfg["id"]
+    rows = con.execute("SELECT date,type,task_id,grade,amount,descr FROM events "
+                       "WHERE child_id=? AND type!='carry' ORDER BY date, id", (cid,)).fetchall()
     earned = sum(r["amount"] for r in rows if r["amount"] > 0)
     fines = sum(r["amount"] for r in rows if r["amount"] < 0)
-    pays = con.execute("SELECT id,date,amount FROM payouts ORDER BY id DESC").fetchall()
+    pays = con.execute("SELECT id,date,amount FROM payouts WHERE child_id=? ORDER BY id DESC", (cid,)).fetchall()
     paid = sum(p["amount"] for p in pays)
+    task_info = {r["id"]: (r["name"], bool(r["is_deleted"]))
+                 for r in con.execute("SELECT id,name,is_deleted FROM tasks WHERE child_id=?", (cid,))}
 
-    per = {}  # kind -> [кол-во, сумма, последнее название]
+    per = {}  # ключ (id категории или тип) -> [кол-во, сумма, последнее название]
     dist = {"grade": defaultdict(int), "control": defaultdict(int)}
     days = set()
     for r in rows:
-        p = per.setdefault(r["kind"], [0, 0, ""])
+        key = r["task_id"] if r["type"] == "task" else r["type"]
+        p = per.setdefault(key, [0, 0, ""])
         p[0] += 1
         p[1] += r["amount"]
         p[2] = r["descr"]
-        if r["kind"] in dist and r["grade"] is not None:
-            dist[r["kind"]][r["grade"]] += 1
+        if r["type"] in dist and r["grade"] is not None:
+            dist[r["type"]][r["grade"]] += 1
         days.add(r["date"])
 
     grade_blocks = []
@@ -258,22 +597,26 @@ def compute_stats(con):
         mx = max(dist[kind].values(), default=0)
         grade_blocks.append({
             "title": title, "count": cnt, "avg": avg,
-            "bars": [(g_, dist[kind].get(g_, 0), (dist[kind].get(g_, 0) / mx * 100) if mx else 0) for g_ in GRADES],
+            "bars": [(g_, dist[kind].get(g_, 0), (dist[kind].get(g_, 0) / mx * 100) if mx else 0)
+                     for g_ in cfg["grades"]],
         })
     special = ("grade", "control", "custom")
-    order = ([x["id"] for x in TASKS if x["id"] in per]
-             + [k for k in per if k not in TASK_BY_ID and k not in special]
+    active = [x["id"] for x in cfg["tasks"]]
+    order = ([k for k in active if k in per]
+             + [k for k in per if k not in active and k not in special]
              + [k for k in special if k in per])
 
     def label(k):
-        if k in TASK_BY_ID:
-            return TASK_BY_ID[k]["name"]
-        return KIND_NAMES[k] if k in special else f"{per[k][2]} (удалена)"
+        if k in special:
+            return KIND_NAMES[k]
+        if k in task_info and not task_info[k][1]:
+            return task_info[k][0]
+        return f"{task_info[k][0] if k in task_info else per[k][2]} (удалена)"
 
     net = earned + fines
     return {
         "earned": earned, "fines": fines, "net": net, "paid": paid,
-        "balance": balance(con), "pays": pays, "pay_count": len(pays),
+        "balance": balance(con, cid), "pays": pays, "pay_count": len(pays),
         "pay_avg": paid // len(pays) if pays else 0,
         "cats": [(label(k), per[k][0], per[k][1]) for k in order],
         "grade_blocks": grade_blocks, "active_days": len(days),
@@ -312,16 +655,19 @@ def chart_svg(data):
     return Markup("".join(p))
 
 
-def pay_hint():
+WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+
+
+def pay_hint(weekday):
     today = date.today()
-    days = (4 - today.weekday()) % 7
+    days = (weekday - today.weekday()) % 7
     if days == 0:
-        return "Сегодня пятница — день выплаты"
-    return f"Ближайшая выплата — пятница, {(today + timedelta(days=days)).strftime('%d.%m.%Y')}"
+        return f"Сегодня {WEEKDAYS[weekday]} — день выплаты"
+    return f"Ближайшая выплата — {WEEKDAYS[weekday]}, {(today + timedelta(days=days)).strftime('%d.%m.%Y')}"
 
 
-# ───────────────────────────── АВТОРИЗАЦИЯ ─────────────────────────────
-FAILS = {}  # ip -> [count, locked_until]
+# ───────────────────────────── АВТОРИЗАЦИЯ (этап 1: один пароль администратора) ─────────────────────────────
+FAILS = {}  # ip -> [count, locked_until]  (в БД переедет на этапе 2)
 
 
 def client_locked(ip):
@@ -337,8 +683,15 @@ def register_fail(ip):
     time.sleep(0.7)  # притормаживаем перебор
 
 
+def get_admin():
+    if "admin_row" not in g:
+        g.admin_row = get_db().execute(
+            "SELECT id,password_hash FROM users WHERE role='admin' AND is_active=1 ORDER BY id LIMIT 1").fetchone()
+    return g.admin_row
+
+
 def is_admin():
-    return bool(ADMIN_PASSWORD) and session.get("admin") is True
+    return session.get("admin") is True and session.get("uid") is not None
 
 
 def admin_required(fn):
@@ -366,8 +719,8 @@ def inject():
     if "csrf" not in session:
         session["csrf"] = secrets.token_hex(16)
     return {
-        "csrf": session["csrf"], "is_admin": is_admin(), "student": T["student"],
-        "read_only_mode": not ADMIN_PASSWORD, "version": VERSION,
+        "csrf": session["csrf"], "is_admin": is_admin(), "student": current_child()["student"],
+        "read_only_mode": get_admin() is None, "version": VERSION,
     }
 
 
@@ -405,32 +758,38 @@ def dow(iso):
     return DOW[datetime.strptime(iso, "%Y-%m-%d").weekday()]
 
 
-# ───────────────────────────── СТРАНИЦЫ (открытые) ─────────────────────────────
+# ───────────────────────────── СТРАНИЦЫ (пока открытые) ─────────────────────────────
 @app.route("/")
 def index():
     con = get_db()
-    bal = balance(con)
-    limit = T["extra_payout_limit"]
-    recent = con.execute("SELECT * FROM events ORDER BY date DESC, id DESC LIMIT 8").fetchall()
+    cfg = current_child()
+    cid = cfg["id"]
+    bal = balance(con, cid)
+    limit = cfg["extra_payout_limit"]
+    recent = con.execute("SELECT * FROM events WHERE child_id=? ORDER BY date DESC, id DESC LIMIT 8", (cid,)).fetchall()
     return render_template(
         "index.html", bal=bal, limit=limit, progress=max(0, min(100, bal * 100 // limit)) if limit else 0,
-        over=bal > limit, hint=pay_hint(), recent=recent, chart=chart_svg(weekly_series(con, 8)),
-        today=date.today().isoformat(), tasks=TASKS, grades=GRADES,
-        tariff_json=json.dumps({k: T[k] for k in ("grade", "control")}))
+        over=bal > limit, hint=pay_hint(cfg["payout_weekday"]), recent=recent,
+        chart=chart_svg(weekly_series(con, cid, 8)),
+        today=date.today().isoformat(), tasks=cfg["tasks"], grades=cfg["grades"],
+        tariff_json=json.dumps({k: cfg[k] for k in ("grade", "control")}))
 
 
 @app.route("/history")
 def history():
     con = get_db()
-    events = con.execute("SELECT * FROM events ORDER BY date DESC, id DESC LIMIT 500").fetchall()
-    pays = con.execute("SELECT * FROM payouts ORDER BY id DESC LIMIT 100").fetchall()
+    cid = current_child()["id"]
+    events = con.execute("SELECT * FROM events WHERE child_id=? ORDER BY date DESC, id DESC LIMIT 500",
+                         (cid,)).fetchall()
+    pays = con.execute("SELECT * FROM payouts WHERE child_id=? ORDER BY id DESC LIMIT 100", (cid,)).fetchall()
     return render_template("history.html", events=events, pays=pays)
 
 
 @app.route("/stats")
 def stats():
     con = get_db()
-    return render_template("stats.html", s=compute_stats(con), chart=chart_svg(weekly_series(con, 12)))
+    cfg = current_child()
+    return render_template("stats.html", s=compute_stats(con, cfg), chart=chart_svg(weekly_series(con, cfg["id"], 12)))
 
 
 # ───────────────────────────── ИКОНКИ И МАНИФЕСТ (для «На экран Домой») ─────────────────────────────
@@ -460,7 +819,6 @@ def healthz():
     return "ok"
 
 
-# ───────────────────────────── ТАРИФЫ ─────────────────────────────
 # ───────────────────────────── ДОГОВОР ─────────────────────────────
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
           "августа", "сентября", "октября", "ноября", "декабря"]
@@ -509,13 +867,16 @@ def contract_example(t):
 
 @app.route("/contract")
 def contract():
-    return render_template("contract.html", c=T["contract"], tasks=TASKS, limit=T["extra_payout_limit"],
-                           cols=grade_columns(T), example=contract_example(T))
+    cfg = current_child()
+    return render_template("contract.html", c=cfg["contract"], tasks=cfg["tasks"], limit=cfg["extra_payout_limit"],
+                           cols=grade_columns(cfg), example=contract_example(cfg))
 
 
+# ───────────────────────────── ТАРИФЫ ─────────────────────────────
 @app.route("/tariffs")
 def tariffs():
-    return render_template("tariffs.html", t=T, grades=GRADES)
+    cfg = current_child()
+    return render_template("tariffs.html", t=cfg, grades=cfg["grades"])
 
 
 class FormError(ValueError):
@@ -554,6 +915,9 @@ def parse_contract(f, to_int):
 @admin_required
 def tariffs_save():
     f = request.form
+    cfg = current_child()
+    cid = cfg["id"]
+    existing = {x["id"]: x for x in cfg["tasks"]}
 
     def to_int(raw, lo, hi, what):
         try:
@@ -567,57 +931,80 @@ def tariffs_save():
     def parse_tasks():
         if not f.getlist("task_idx"):
             raise FormError("Форма категорий повреждена — обновите страницу.")
-        tasks, names, ids = [], set(), set()
+        ops, deleted, names = [], [], set()
         for idx in dict.fromkeys(f.getlist("task_idx")):
             if not re.fullmatch(r"\w{1,24}", idx):
                 raise FormError("Форма категорий повреждена — обновите страницу.")
-            tid = f.get(f"task_{idx}_id", "").strip()
+            tid_raw = f.get(f"task_{idx}_id", "").strip()
             name = f.get(f"task_{idx}_name", "").strip()[:40]
             raw = f.get(f"task_{idx}_amount", "").strip()
-            if tid and f.get(f"task_{idx}_del") is not None:
-                continue  # категория удалена (старые записи остаются в истории)
-            if not tid and not name and not raw:
+            tid = None
+            if tid_raw:
+                if not re.fullmatch(r"[0-9]{1,9}", tid_raw) or int(tid_raw) not in existing:
+                    raise FormError("Категория не найдена — обновите страницу.")
+                tid = int(tid_raw)
+                if f.get(f"task_{idx}_del") is not None:
+                    deleted.append(tid)  # мягкое удаление: старые записи остаются в истории
+                    continue
+            elif not name and not raw:
                 continue  # пустая строка «добавить»
-            if tid and tid not in TASK_BY_ID:
-                raise FormError("Категория не найдена — обновите страницу.")
             if not name:
                 raise FormError("У категории должно быть название.")
             if name.casefold() in names:
                 raise FormError(f"Категория «{name}» указана дважды.")
             names.add(name.casefold())
             amount = to_int(raw, -100000, 100000, f"«{name}»")
-            if not tid:
-                while True:
-                    tid = "t" + secrets.token_hex(3)
-                    if tid not in TASK_BY_ID and tid not in ids:
-                        break
-            ids.add(tid)
-            tasks.append({"id": tid, "name": name, "amount": amount, "once_per_day": f.get(f"task_{idx}_once") is not None})
-        if len(tasks) > 30:
+            ops.append({"id": tid, "name": name, "amount": amount, "once": f.get(f"task_{idx}_once") is not None})
+        if len(ops) > 30:
             raise FormError("Слишком много категорий (максимум 30).")
-        return tasks
+        return ops, deleted
 
     try:
         student = f.get("student", "").strip()[:40]
         if not student:
             raise FormError("Укажите имя ученика.")
-        new = {
-            "student": student,
-            "tasks": parse_tasks(),
-            "extra_payout_limit": to_int(f.get("limit", ""), 0, 100000, "Выплата вне очереди"),
-            "grade": {g: to_int(f.get(f"g{g}", ""), -100000, 100000, f"Оценка {g}") for g in GRADES},
-            "control": {g: to_int(f.get(f"c{g}", ""), -100000, 100000, f"Контрольная {g}") for g in GRADES},
-            "contract": parse_contract(f, to_int),
-        }
+        ops, deleted = parse_tasks()
+        limit = to_int(f.get("limit", ""), 0, 100000, "Выплата вне очереди")
+        grade = {g_: to_int(f.get(f"g{g_}", ""), -100000, 100000, f"Оценка {g_}") for g_ in cfg["grades"]}
+        control = {g_: to_int(f.get(f"c{g_}", ""), -100000, 100000, f"Контрольная {g_}") for g_ in cfg["grades"]}
+        ctr = parse_contract(f, to_int)
     except FormError as e:
         flash(str(e), "err")
         return redirect(url_for("tariffs"))
+
     con = get_db()
-    for x in new["tasks"]:  # переименование категории обновляет и старые записи
-        old = TASK_BY_ID.get(x["id"])
-        if old and old["name"] != x["name"]:
-            con.execute("UPDATE events SET descr=? WHERE kind=?", (x["name"], x["id"]))
-    save_tariffs(new)
+    con.execute("BEGIN IMMEDIATE")  # всё сохраняется одной транзакцией — без «половинчатых» тарифов
+    try:
+        for tid in deleted:
+            con.execute("UPDATE tasks SET is_deleted=1 WHERE id=? AND child_id=?", (tid, cid))
+        for pos, x in enumerate(ops):
+            if x["id"]:
+                con.execute("UPDATE tasks SET name=?, amount=?, once_per_day=?, sort_order=? WHERE id=? AND child_id=?",
+                            (x["name"], x["amount"], int(x["once"]), pos, x["id"], cid))
+                if existing[x["id"]]["name"] != x["name"]:  # переименование обновляет и старые записи
+                    con.execute("UPDATE events SET descr=? WHERE child_id=? AND task_id=?", (x["name"], cid, x["id"]))
+            else:
+                con.execute("INSERT INTO tasks(child_id,name,amount,once_per_day,sort_order) VALUES(?,?,?,?,?)",
+                            (cid, x["name"], x["amount"], int(x["once"]), pos))
+        con.execute("UPDATE children SET name=?, extra_payout_limit=? WHERE id=?", (student, limit, cid))
+        for typ, vals in (("grade", grade), ("control", control)):
+            for g_, v in vals.items():
+                con.execute("INSERT OR REPLACE INTO grade_tariffs(child_id,type,grade,amount) VALUES(?,?,?,?)",
+                            (cid, typ, g_, v))
+        crow = con.execute("SELECT id FROM contracts WHERE child_id=?", (cid,)).fetchone()
+        con.execute(
+            "UPDATE contracts SET number=?, city=?, date=?, end_date=?, student_full=?, student_age=?, student_class=?"
+            " WHERE id=?",
+            (ctr["number"], ctr["city"], ctr["date"], ctr["end"], ctr["student_full"], ctr["student_age"],
+             ctr["student_class"], crow["id"]))
+        con.execute("DELETE FROM contract_parties WHERE contract_id=?", (crow["id"],))
+        for pos, p in enumerate(ctr["parents"]):
+            con.execute("INSERT INTO contract_parties(contract_id,name,role,female,sort_order) VALUES(?,?,?,?,?)",
+                        (crow["id"], p["name"], p["role"], int(p["female"]), pos))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
     flash("Тарифы сохранены. Новые суммы действуют для будущих записей.", "ok")
     return redirect(url_for("tariffs"))
 
@@ -629,16 +1016,19 @@ def login():
         return redirect(url_for("index"))
     if request.method == "POST":
         ip = request.remote_addr or "?"
-        if not ADMIN_PASSWORD:
+        adm = get_admin()
+        if adm is None:
             flash("Пароль не задан в настройках контейнера (ADMIN_PASSWORD).", "err")
         elif client_locked(ip):
             flash("Слишком много попыток. Подождите 5 минут.", "err")
-        elif hmac.compare_digest(request.form.get("password", "").encode(), ADMIN_PASSWORD.encode()):
+        elif check_password_hash(adm["password_hash"], request.form.get("password", "")):
             FAILS.pop(ip, None)
             session.clear()
             session["admin"] = True
+            session["uid"] = adm["id"]
             session["csrf"] = secrets.token_hex(16)
             session.permanent = True
+            get_db().execute("UPDATE users SET last_login=? WHERE id=?", (now_iso(), adm["id"]))
             return redirect(url_for("index"))
         else:
             register_fail(ip)
@@ -668,22 +1058,23 @@ def back():
 @app.route("/add/quick", methods=["POST"])
 @admin_required
 def add_quick():
-    kind = request.form.get("kind", "")
+    cfg = current_child()
     try:
         d = parse_date(request.form.get("date", ""))
     except ValueError:
         flash("Некорректная дата.", "err")
         return back()
-    task = TASK_BY_ID.get(kind)
+    raw = request.form.get("kind", "")
+    task = next((x for x in cfg["tasks"] if raw.isdigit() and x["id"] == int(raw)), None)
     if not task:
         flash("Такой категории нет (возможно, её удалили) — обновите страницу.", "err")
         return back()
     con = get_db()
     if task["once_per_day"] and con.execute(
-            "SELECT 1 FROM events WHERE date=? AND kind=?", (d, kind)).fetchone():
+            "SELECT 1 FROM events WHERE child_id=? AND date=? AND task_id=?", (cfg["id"], d, task["id"])).fetchone():
         flash(f"«{task['name']}»: за эту дату уже записано.", "err")
         return back()
-    add_event(con, d, kind, task["name"], task["amount"])
+    add_event(con, cfg["id"], d, "task", task["name"], task["amount"], task_id=task["id"], author=session.get("uid"))
     flash(f"{task['name']}: {money(task['amount'], True)}", "ok")
     return back()
 
@@ -691,16 +1082,19 @@ def add_quick():
 @app.route("/add/grade", methods=["POST"])
 @admin_required
 def add_grade():
+    cfg = current_child()
     kind = request.form.get("kind", "")
     try:
+        if kind not in ("grade", "control"):
+            raise KeyError(kind)
         d = parse_date(request.form.get("date", ""))
         grade = int(request.form.get("grade", ""))
-        amount = T[kind][grade]
+        amount = cfg[kind][grade]
     except (ValueError, KeyError):
         flash("Некорректные данные оценки.", "err")
         return back()
     descr = f"{'Контрольная' if kind == 'control' else 'Оценка'}: {grade}"
-    add_event(get_db(), d, kind, descr, amount, grade)
+    add_event(get_db(), cfg["id"], d, kind, descr, amount, grade=grade, author=session.get("uid"))
     flash(f"{descr} → {money(amount, True)}", "ok")
     return back()
 
@@ -717,7 +1111,7 @@ def add_custom():
         flash("Введите сумму целым числом (можно с минусом) и корректную дату.", "err")
         return back()
     note = request.form.get("note", "").strip()[:120] or "По договорённости"
-    add_event(get_db(), d, "custom", note, amount)
+    add_event(get_db(), current_child()["id"], d, "custom", note, amount, author=session.get("uid"))
     flash(f"{note}: {money(amount, True)}", "ok")
     return back()
 
@@ -728,7 +1122,7 @@ def payout():
     try:
         amount = int(request.form.get("amount", ""))
         expected = int(request.form.get("expected", ""))
-        do_payout(get_db(), amount, expected)
+        do_payout(get_db(), current_child()["id"], amount, expected, session.get("uid"))
     except ValueError as e:
         flash(str(e) if str(e) and "invalid literal" not in str(e) else "Некорректная сумма.", "err")
     else:
@@ -740,7 +1134,8 @@ def payout():
 @admin_required
 def delete_event(event_id):
     cur = get_db().execute(
-        "DELETE FROM events WHERE id=? AND payout_id IS NULL AND kind!='carry'", (event_id,))
+        "DELETE FROM events WHERE id=? AND child_id=? AND payout_id IS NULL AND type!='carry'",
+        (event_id, current_child()["id"]))
     flash("Запись удалена." if cur.rowcount else "Эту запись удалить нельзя (уже выплачена или служебная).",
           "ok" if cur.rowcount else "err")
     return back()
@@ -751,8 +1146,9 @@ def delete_event(event_id):
 def undo():
     con = get_db()
     row = con.execute(
-        "SELECT id,kind FROM events WHERE payout_id IS NULL ORDER BY id DESC LIMIT 1").fetchone()
-    if not row or row["kind"] == "carry":
+        "SELECT id,type FROM events WHERE child_id=? AND payout_id IS NULL ORDER BY id DESC LIMIT 1",
+        (current_child()["id"],)).fetchone()
+    if not row or row["type"] == "carry":
         flash("Отменять нечего.", "err")
     else:
         con.execute("DELETE FROM events WHERE id=?", (row["id"],))
@@ -763,7 +1159,5 @@ def undo():
 if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", "8080"))
-    if not ADMIN_PASSWORD:
-        print("ВНИМАНИЕ: ADMIN_PASSWORD не задан — приложение работает только на просмотр.", flush=True)
-    print(f"Учёт запущен на порту {port}", flush=True)
+    print(f"Мотиватор v{VERSION} запущен на порту {port}", flush=True)
     serve(app, host="0.0.0.0", port=port, threads=6)
