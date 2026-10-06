@@ -1,0 +1,11 @@
+<section class="card hero {{ 'pos' if bal > 0 else 'neg' if bal < 0 else 'zero' }}">
+  <div class="label">Накоплено к выплате</div>
+  <div class="balance">{{ bal|money }}</div>
+  <div class="hint">{{ hint }}</div>
+  {% if bal < 0 %}<div class="hint warn">Накоплен штраф — он вычтется из ближайшего гонорара</div>{% endif %}
+  {% if over %}<div class="hint good">Накоплено больше {{ limit|money }} — можно требовать выплату вне очереди</div>
+  {% else %}
+  <div class="meter" title="До выплаты вне очереди"><span style="width: {{ progress }}%"></span></div>
+  <div class="tiny">до выплаты вне очереди: {{ (limit - bal if bal > 0 else limit)|money }}</div>
+  {% endif %}
+</section>

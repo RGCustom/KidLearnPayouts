@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Мой аккаунт{% endblock %}
+{% block content %}
+{% if must_change %}<div class="flash err">Чтобы продолжить, смените временный пароль.</div>{% endif %}
+<div class="grid">
+  <section class="card">
+    <h2>Сменить пароль</h2>
+    <p class="tiny">{{ user.display_name }} · {{ role_names[user.role] }} · логин {{ user.login }}</p>
+    <form method="post" action="{{ url_for('account_password') }}" class="stack mt">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field">Текущий пароль<input type="password" name="current" autocomplete="current-password" required></label>
+      <label class="field">Новый пароль (от 8 символов)<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
+      <label class="field">Повторите новый пароль<input type="password" name="repeat" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary">Сменить пароль</button>
+      <div class="tiny">На этом устройстве вы останетесь, на остальных придётся войти заново.</div>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Мои устройства</h2>
+    <ul class="list">
+      {% for s in sessions %}
+      <li><span class="d">{{ s.last_seen|dt }}</span>
+        <span class="w">{{ s.device }}{% if s.id == current_sid %} <span class="pill ok">это устройство</span>{% endif %}{% if s.remember %} <span class="pill">запомнено</span>{% endif %}</span>
+        <form method="post" action="{{ url_for('account_session_revoke', sid=s.id) }}" data-confirm="{{ 'Выйти на этом устройстве?' if s.id == current_sid else 'Отключить это устройство?' }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><button class="x" title="Завершить сеанс">✕</button></form></li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{{ url_for('account_logout_all') }}" data-confirm="Выйти на всех устройствах, включая это?" class="mt">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost sm">Выйти на всех устройствах</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

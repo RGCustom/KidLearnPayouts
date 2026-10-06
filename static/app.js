@@ -46,3 +46,22 @@ document.addEventListener('submit', function (e) {
 document.addEventListener('click', function (e) {
   if (e.target.closest('[data-print]')) window.print();
 });
+
+// закрываем меню пользователя по клику вне его
+document.addEventListener('click', function (e) {
+  document.querySelectorAll('details.menu[open]').forEach(function (d) {
+    if (!d.contains(e.target)) d.removeAttribute('open');
+  });
+});
+
+// «Копировать» ссылку ребёнка
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-copy]');
+  if (!b) return;
+  var inp = document.querySelector(b.dataset.copy);
+  if (!inp) return;
+  var label = b.textContent;
+  function done() { b.textContent = 'Скопировано'; setTimeout(function () { b.textContent = label; }, 1500); }
+  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(inp.value).then(done); }
+  else { inp.select(); try { document.execCommand('copy'); done(); } catch (x) { /* пользователь скопирует вручную */ } }
+});

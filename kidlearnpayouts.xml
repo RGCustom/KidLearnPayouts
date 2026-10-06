@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/RGCustom/KidLearnPayouts/issues</Support>
   <Project>https://github.com/RGCustom/KidLearnPayouts</Project>
-  <Overview>Учёт по Договору № 1/2026: накопления, выплаты и статистика. Просмотр и статистика открыты всем, записи и выплаты — по паролю. Тёмная веб-тема.</Overview>
+  <Overview>Мотиватор: семейный учёт накоплений и выплат по договору. Несколько детей, роли «Администратор» / «Взрослый» / «Ребёнок» (по секретной ссылке и PIN), договор с редакциями, журнал действий. Вход по логину и паролю: первый администратор admin создаётся из пароля ниже. Тёмная веб-тема.</Overview>
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/RGCustom/KidLearnPayouts/main/kidlearnpayouts.xml</TemplateURL>
@@ -22,10 +22,14 @@
   <DonateLink/>
   <Requires/>
   <Config Name="WebUI порт" Target="8080" Default="8090" Mode="tcp" Description="Порт веб-интерфейса" Type="Port" Display="always" Required="true" Mask="false">8090</Config>
-  <Config Name="Данные (appdata)" Target="/config" Default="/mnt/user/appdata/kidlearnpayouts" Mode="rw" Description="База uchet.db, tariffs.json, ключ сессий" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/kidlearnpayouts</Config>
-  <Config Name="Пароль для правок" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Нужен для записей, выплат и удаления. Просмотр и статистика — без пароля." Type="Variable" Display="always" Required="true" Mask="true"/>
-  <Config Name="Часовой пояс" Target="TZ" Default="Europe/Moscow" Mode="" Description="Влияет на «сегодня» и пятницу выплат" Type="Variable" Display="always" Required="false" Mask="false">Europe/Moscow</Config>
+  <Config Name="Данные (appdata)" Target="/config" Default="/mnt/user/appdata/kidlearnpayouts" Mode="rw" Description="База uchet.db, ключ secret.key, резервная копия при обновлении с 1.7" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/kidlearnpayouts</Config>
+  <Config Name="Пароль администратора" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Логин admin. Нужен при первом запуске (создаёт администратора), дальше пароль не перезаписывается — меняйте его в приложении. Лучше от 8 символов." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Часовой пояс" Target="TZ" Default="Europe/Moscow" Mode="" Description="Влияет на «сегодня» и день выплаты" Type="Variable" Display="always" Required="false" Mask="false">Europe/Moscow</Config>
+  <Config Name="Внешний адрес (BASE_URL)" Target="BASE_URL" Default="" Mode="" Description="Например https://kids.example.com — для ссылок и QR-кодов детей. Если пусто, берётся адрес, по которому открыта страница." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="HTTPS-куки" Target="COOKIE_SECURE" Default="0" Mode="" Description="1 — если заходите через HTTPS (reverse proxy)" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
-  <Config Name="За reverse proxy" Target="TRUST_PROXY" Default="0" Mode="" Description="1 — если перед контейнером стоит NPM/Caddy/Traefik" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
-  <Config Name="Часов до выхода" Target="SESSION_HOURS" Default="12" Mode="" Description="Сколько держится вход по паролю" Type="Variable" Display="advanced" Required="false" Mask="false">12</Config>
+  <Config Name="За reverse proxy" Target="TRUST_PROXY" Default="0" Mode="" Description="1 — если перед контейнером стоит NPM/Caddy/Traefik (иначе защита от перебора считает все запросы с одного адреса)" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="Часов до выхода" Target="SESSION_HOURS" Default="12" Mode="" Description="Сколько держится вход без «Запомнить меня» (скользящий срок)" Type="Variable" Display="advanced" Required="false" Mask="false">12</Config>
+  <Config Name="Дней «Запомнить меня»" Target="REMEMBER_DAYS" Default="30" Mode="" Description="Срок входа с «Запомнить меня», скользящий, от 30 до 90" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="Хранить журнал, дней" Target="AUDIT_KEEP_DAYS" Default="365" Mode="" Description="Старше — удаляется. 0 — хранить всегда." Type="Variable" Display="advanced" Required="false" Mask="false">365</Config>
+  <Config Name="Сброс пароля администратора" Target="RESET_ADMIN_PASSWORD" Default="0" Mode="" Description="Аварийно: 1 вместе с паролем выше один раз сбросит пароль admin. Уберите после входа." Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
 </Container>

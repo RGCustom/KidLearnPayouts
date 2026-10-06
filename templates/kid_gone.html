@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Мотиватор{% endblock %}
+{% block content %}
+<section class="card login">
+  {% if bot %}
+  <h1>Мотиватор</h1>
+  <p class="muted">Это личная ссылка. Откройте её в браузере.</p>
+  {% else %}
+  <h1>Нужно войти</h1>
+  <p class="muted">Вы не вошли или сеанс закончился. Откройте свою ссылку ещё раз — если её нет, спросите у родителей.</p>
+  {% endif %}
+</section>
+{% endblock %}

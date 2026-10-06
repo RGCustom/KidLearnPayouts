@@ -64,6 +64,8 @@
   <h2 class="mt2">Прочее</h2>
   <table class="tt">
     <tr><td>Выплата вне очереди, если накоплено больше</td><td class="r">{{ amt('limit', t.extra_payout_limit, 0) }}</td></tr>
+    <tr><td>День выплаты</td><td class="r">{% if is_admin %}<select class="tin wide" name="payday">{% for n in weekdays %}<option value="{{ loop.index0 }}" {{ 'selected' if loop.index0 == t.payout_weekday }}>{{ n }}</option>{% endfor %}</select>{% else %}<b>{{ weekdays[t.payout_weekday] }}</b>{% endif %}</td></tr>
+    <tr><td>Шкала оценок<div class="tiny">Новые баллы получат 0 ₽ — укажите суммы после сохранения. Убранные баллы уходят из тарифов, история остаётся.</div></td><td class="r">{% if is_admin %}от <input class="tin sm" type="number" name="gmin" value="{{ t.grade_min }}" min="0" max="20" required> до <input class="tin sm" type="number" name="gmax" value="{{ t.grade_max }}" min="0" max="20" required>{% else %}<b>от {{ t.grade_min }} до {{ t.grade_max }}</b>{% endif %}</td></tr>
     <tr><td>Имя ученика</td><td class="r">{% if is_admin %}<input class="tin wide" type="text" name="student" value="{{ t.student }}" maxlength="40" required>{% else %}<b>{{ t.student }}</b>{% endif %}</td></tr>
   </table>
 </section>
@@ -89,35 +91,9 @@
 </div>
 
 {% if is_admin %}
-{% set c = t.contract %}
 <section class="card">
-  <h2>Данные договора <a class="more" href="{{ url_for('contract') }}">открыть договор →</a></h2>
-  <div class="stack">
-    <div class="row">
-      <label class="field">№ договора<input type="text" name="number" value="{{ c.number }}" maxlength="20"></label>
-      <label class="field">Город<input type="text" name="city" value="{{ c.city }}" maxlength="40"></label>
-    </div>
-    <div class="row">
-      <label class="field">Дата договора<input type="date" name="cdate" value="{{ c.date }}" required></label>
-      <label class="field">Действует до<input type="date" name="cend" value="{{ c.end }}" required></label>
-    </div>
-    <label class="field">Ребёнок (ФИО полностью)<input type="text" name="student_full" value="{{ c.student_full }}" maxlength="80" required></label>
-    <div class="row">
-      <label class="field">Возраст<input type="number" name="student_age" value="{{ c.student_age }}" min="0" max="99" required></label>
-      <label class="field">Класс<input type="number" name="student_class" value="{{ c.student_class }}" min="0" max="12" required></label>
-    </div>
-    {% for i in (1, 2) %}
-    {% set p = c.parents[i - 1] if c.parents|length >= i else None %}
-    <div class="row">
-      <label class="field">Родитель {{ i }}{{ ' (необязательно)' if i == 2 }} — ФИО
-        <input type="text" name="p{{ i }}_name" value="{{ p.name if p }}" maxlength="80"></label>
-      <label class="field">Роль<input type="text" name="p{{ i }}_role" value="{{ p.role if p }}" maxlength="20" placeholder="Папа / Мама"></label>
-      <label class="field">Пол<select name="p{{ i }}_sex">
-        <option value="m" {{ 'selected' if p and not p.female }}>М</option>
-        <option value="f" {{ 'selected' if p and p.female }}>Ж</option></select></label>
-    </div>
-    {% endfor %}
-  </div>
+  <h2>Договор <a class="more" href="{{ url_for('contract') }}">открыть →</a></h2>
+  <p class="tiny">Данные договора, подписанты и «Правила игры» правятся на странице «<a href="{{ url_for('contract_edit') }}">Договор → Править</a>». В действующий договор изменения тарифов и текста попадают после кнопки «Новая редакция».</p>
 </section>
 {% endif %}
 
@@ -128,6 +104,6 @@
 </div>
 </form>
 {% else %}
-<p class="tiny">Изменить тарифы и категории можно после входа по паролю. Новые суммы действуют только для будущих записей.</p>
+<p class="tiny">{% if kid_mode %}Тарифы настраивают родители.{% else %}Изменить тарифы и категории может администратор.{% endif %} Новые суммы действуют только для будущих записей.</p>
 {% endif %}
 {% endblock %}

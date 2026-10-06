@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Все дети{% endblock %}
+{% block content %}
+<div class="kidgrid">
+  {% for k in cards %}
+  <a class="card kid {{ 'pos' if k.bal > 0 else 'neg' if k.bal < 0 }}" href="{{ url_for('index', child_id=k.id) }}">
+    <div class="label">{{ k.name }}</div>
+    <div class="num {{ 'p' if k.bal > 0 else 'n' if k.bal < 0 }}">{{ k.bal|money }}</div>
+    {% if k.over %}<div class="tiny p">накоплено больше {{ k.limit|money }} — можно выплатить вне очереди</div>
+    {% else %}<div class="meter" title="До выплаты вне очереди"><span style="width: {{ k.progress }}%"></span></div>
+    <div class="tiny">до выплаты вне очереди: {{ (k.limit - k.bal if k.bal > 0 else k.limit)|money }}</div>{% endif %}
+    <div class="tiny mt">за неделю: <b class="{{ 'p' if k.week > 0 else 'n' if k.week < 0 }}">{{ k.week|money(True) }}</b></div>
+    <div class="tiny">{{ k.hint }}</div>
+    {% if k.pay_day %}<span class="pill ok mt">сегодня выплата</span>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

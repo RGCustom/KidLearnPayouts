@@ -2,9 +2,28 @@
 {% block title %}Договор{% endblock %}
 {% block content %}
 {% set n = c.parents|length %}
-<div class="row between noprint">
-  <span class="tiny">Договор собирается из раздела «Тарифы» и данных договора. Для PDF: «Печать → Сохранить как PDF».</span>
-  <button type="button" class="btn primary sm" data-print>Печать / PDF</button>
+<div class="noprint">
+  <div class="row between">
+    <span class="tiny">
+      {% if draft %}Черновик по текущим настройкам — это ещё не действующая редакция.
+      {% elif rev %}Редакция № {{ rev.n }} · с {{ rev.effective_from|dmy }} · {{ {'current': 'действует', 'future': 'вступит в силу', 'old': 'архив'}[rev.status] }}
+      {% else %}Договор собирается из тарифов и данных договора. Для PDF: «Печать → Сохранить как PDF».{% endif %}</span>
+    <span class="acts">
+      {% if can_manage %}<a class="btn ghost sm" href="{{ url_for('contract_edit') }}">Править</a>{% endif %}
+      <button type="button" class="btn primary sm" data-print>Печать / PDF</button>
+    </span>
+  </div>
+  {% if drift %}<div class="flash err">Текущие настройки (тарифы, шкала, данные договора, правила) отличаются от последней редакции. В договоре они появятся после создания новой редакции. {% if not draft %}<a href="{{ request.path }}?draft=1">Посмотреть черновик</a>{% endif %}</div>{% endif %}
+  {% if draft %}<p class="tiny"><a href="{{ request.path }}">← действующая редакция</a></p>
+  {% elif rev and rev.status != 'current' %}<p class="tiny"><a href="{{ request.path }}">← действующая редакция</a></p>{% endif %}
+  {% if can_manage %}
+  <form method="post" action="{{ url_for('contract_revision_create') }}" class="row revform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">Новая редакция действует с<input type="date" name="effective_from" value="{{ today }}" required></label>
+    <button class="btn sm" {{ '' if drift else 'disabled' }}>Создать редакцию</button>
+    {% if not drift %}<span class="tiny">Изменений с последней редакции нет.</span>{% endif %}
+  </form>
+  {% endif %}
 </div>
 
 <article class="doc">
@@ -35,7 +54,7 @@
   </div>
   {% endif %}
 
-  <p>2.2. Оценки в школе и контрольные (по 12-балльной шкале; каждая оценка оплачивается отдельно):</p>
+  <p>2.2. Оценки в школе и контрольные (по шкале от {{ scale_lo }} до {{ scale_hi }}; каждая оценка оплачивается отдельно):</p>
   <div class="scroll">
   <table class="dt">
     <tr><th>Оценка →</th>{% for lbl, a, b in cols %}<th>{{ lbl }}</th>{% endfor %}</tr>
@@ -47,17 +66,13 @@
 
   <h3>3. КАК И КОГДА ПЛАТИМ</h3>
   <ul>
-    <li>Выплата — раз в неделю, по пятницам (или в другой день по договорённости), наличными или переводом на карту / электронный кошелёк Ученика.</li>
+    <li>Выплата — раз в неделю, {{ payday_text }} (или в другой день по договорённости), наличными или переводом на карту / электронный кошелёк Ученика.</li>
     <li>Если накопилось больше {{ limit|money }}, Ученик вправе потребовать выплату вне очереди.</li>
     <li>Штрафы вычитаются из ближайшей выплаты. Если выплаты не хватает, остаток штрафа переносится на следующую неделю.</li>
   </ul>
 
   <h3>4. ПРАВИЛА ИГРЫ</h3>
-  <p>Талантливый Ученик обязуется:</p>
-  <ul><li>не списывать и не хитрить;</li><li>показывать дневник / электронный журнал без напоминаний;</li><li>не тратить весь заработок на вредную еду (по согласованию с Инвестором).</li></ul>
-  <p>Инвестор обязуется:</p>
-  <ul><li>не «пилить» за уроки, если тарифы выполнены;</li><li>платить вовремя;</li><li>не менять условия в одностороннем порядке.</li></ul>
-  <p>Форс-мажор: болезнь, отключение света или интернета, внезапные гости с вкусным тортом — сроки сдачи домашки сдвигаются по согласию Сторон, штрафов нет.</p>
+  {{ rules_html }}
 
   <h3>5. СРОК ДЕЙСТВИЯ</h3>
   <p>Договор действует с момента подписания до {{ c.end|rudate }}. Ученик может расторгнуть его, если решит, что учёба — не его путь (но Инвестор настоятельно советует этого не делать).</p>
@@ -68,5 +83,20 @@
     {% for p in c.parents %}<p>ИНВЕСТОР ({{ p.role|upper }}):<br>Подпись ____________ / {{ p.name|fio }}</p>{% endfor %}
     <p>ТАЛАНТЛИВЫЙ УЧЕНИК:<br>Подпись ____________ / {{ c.student_full|fio }}</p>
   </div>
+  <p class="note">Это игровой семейный документ, а не юридический договор: он не создаёт юридических обязательств и не заменяет договоров, предусмотренных законом.</p>
 </article>
+
+{% if revs|length > 1 or (revs and rev and rev.status != 'current') %}
+<section class="card noprint">
+  <h2>Редакции</h2>
+  <ul class="list">
+    {% for r in revs|reverse %}
+    <li><span class="d">№ {{ r.n }}</span>
+      <span class="w"><a href="{{ request.path }}?rev={{ r.id }}">действует с {{ r.effective_from|dmy }}</a>
+        {% if r.status == 'current' %}<span class="pill ok">действует</span>{% elif r.status == 'future' %}<span class="pill">вступит в силу</span>{% else %}<span class="pill">архив</span>{% endif %}
+        <span class="tiny">создана {{ r.created_at|dt }}</span></span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 {% endblock %}

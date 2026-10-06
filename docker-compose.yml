@@ -7,9 +7,14 @@ services:
     ports:
       - "8090:8080"
     environment:
-      ADMIN_PASSWORD: "СМЕНИТЕ_МЕНЯ"
+      ADMIN_PASSWORD: "СМЕНИТЕ_МЕНЯ"   # пароль первого администратора (логин admin), используется один раз
       TZ: "Europe/Moscow"
-      # COOKIE_SECURE: "1"   # если открываете через HTTPS (reverse proxy)
-      # TRUST_PROXY: "1"     # если стоит reverse proxy (NPM, Caddy, Traefik)
+      # COOKIE_SECURE: "1"     # если открываете через HTTPS (reverse proxy)
+      # TRUST_PROXY: "1"       # если стоит reverse proxy (NPM, Caddy, Traefik) — обязательно за прокси
+      # BASE_URL: "https://kids.example.com"   # внешний адрес для ссылок и QR детей
+      # REMEMBER_DAYS: "30"    # «Запомнить меня», 30–90 дней
+      # SESSION_HOURS: "12"    # вход без «Запомнить меня»
+      # AUDIT_KEEP_DAYS: "365" # сколько хранить журнал, 0 — всегда
+      # RESET_ADMIN_PASSWORD: "1"  # аварийный сброс пароля admin из ADMIN_PASSWORD, потом уберите
     volumes:
       - /mnt/user/appdata/kidlearnpayouts:/config

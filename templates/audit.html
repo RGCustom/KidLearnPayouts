@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Журнал{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Журнал действий <span class="muted sm">записей: {{ total }}</span></h2>
+  <form method="get" action="{{ url_for('audit_page') }}" class="stack">
+    <div class="row">
+      <label class="field">Ребёнок
+        <select name="child"><option value="">все</option>
+          {% for k in kids %}<option value="{{ k.id }}" {{ 'selected' if sel.child == k.id|string }}>{{ k.name }}</option>{% endfor %}</select></label>
+      <label class="field">Кто
+        <select name="user"><option value="">все</option>
+          <option value="kid" {{ 'selected' if sel.user == 'kid' }}>дети (по ссылке)</option>
+          <option value="system" {{ 'selected' if sel.user == 'system' }}>система</option>
+          {% for u in users %}<option value="{{ u.id }}" {{ 'selected' if sel.user == u.id|string }}>{{ u.login }}</option>{% endfor %}</select></label>
+      <label class="field">Действие
+        <select name="action"><option value="">все</option>
+          {% for key, label in labels.items() %}<option value="{{ key }}" {{ 'selected' if sel.action == key }}>{{ label }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="row">
+      <label class="field">С<input type="date" name="from" value="{{ sel['from'] }}"></label>
+      <label class="field">По<input type="date" name="to" value="{{ sel['to'] }}"></label>
+      <div class="acts"><button class="btn primary sm">Показать</button><a class="btn ghost sm" href="{{ url_for('audit_page') }}">Сбросить</a></div>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  {% if rows %}
+  <div class="scroll">
+  <table class="aud">
+    <thead><tr><th>Когда</th><th>Кто</th><th>Действие</th><th>Ребёнок</th><th>Подробности</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr class="arow">
+      <td class="nw">{{ r.ts|dt }}</td>
+      <td class="nw">{{ r.actor or '—' }}</td>
+      <td class="nw {{ 'n' if r.action in fail }}">{{ labels.get(r.action, r.action) }}</td>
+      <td class="nw">{{ r.child_name or '—' }}</td>
+      <td class="det">{{ r.details or '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="row between mt pager">
+    <span>{% if page > 1 %}<a class="btn ghost sm" href="{{ url_for('audit_page', page=page - 1, **filters) }}">← новее</a>{% endif %}</span>
+    <span class="tiny">страница {{ page }} из {{ pages }}</span>
+    <span>{% if page < pages %}<a class="btn ghost sm" href="{{ url_for('audit_page', page=page + 1, **filters) }}">старше →</a>{% endif %}</span>
+  </div>
+  {% else %}<p class="muted">Записей нет.</p>{% endif %}
+  <div class="tiny mt">В журнале нет паролей, PIN и токенов ссылок. Старые записи удаляются через AUDIT_KEEP_DAYS дней (по умолчанию 365, 0 — не удалять).</div>
+</section>
+{% endblock %}

@@ -1,7 +1,8 @@
 FROM python:3.12-alpine
 
 LABEL org.opencontainers.image.source="https://github.com/RGCustom/KidLearnPayouts" \
-      org.opencontainers.image.description="Учёт по Договору № 1/2026: накопления, выплаты, статистика"
+      org.opencontainers.image.version="2.0" \
+      org.opencontainers.image.description="Мотиватор: семейный учёт накоплений и выплат по договору (несколько детей, роли, договор с редакциями)"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

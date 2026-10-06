@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Мои деньги{% endblock %}
+{% block content %}
+{% include "_hero.html" %}
+<div class="grid two">
+  <section class="card">
+    <h2>Последние записи <a class="more" href="{{ url_for('kid_history') }}">все →</a></h2>
+    {% if recent %}
+    <ul class="list">
+      {% for e in recent %}
+      <li><span class="d">{{ e.date|dow }} {{ e.date|dmy }}</span><span class="w">{{ e.descr }}</span>
+        <span class="a {{ 'p' if e.amount > 0 else 'n' if e.amount < 0 else '' }}">{{ e.amount|money(True) }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">Пока пусто.</p>{% endif %}
+  </section>
+  <section class="card">
+    <h2>По неделям <a class="more" href="{{ url_for('kid_stats') }}">статистика →</a></h2>
+    {{ chart }}
+  </section>
+</div>
+{% endblock %}

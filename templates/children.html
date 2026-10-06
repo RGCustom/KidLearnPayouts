@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Дети{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Дети</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Имя</th><th class="r">Накоплено</th><th>Доступ ребёнка</th><th class="c">Порядок</th><th></th></tr></thead>
+    <tbody>
+    {% for k in items %}
+    <tr class="{{ 'paid' if k.archived }}">
+      <td>
+        <form method="post" action="{{ url_for('child_rename', cid=k.id) }}" class="row namerow">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="text" name="name" value="{{ k.name }}" maxlength="40" required>
+          <button class="btn ghost sm">Сохранить</button>
+        </form>
+        {% if k.archived %}<span class="pill">в архиве</span> {% endif %}<a class="tiny" href="{{ url_for('index', child_id=k.id) }}">открыть →</a>
+      </td>
+      <td class="r nw {{ 'p' if k.bal > 0 else 'n' if k.bal < 0 }}">{{ k.bal|money }}</td>
+      <td class="nw"><span class="pill {{ 'ok' if k.access != 'off' }}">{{ {'off': 'выкл', 'link': 'ссылка', 'pin': 'ссылка + PIN'}[k.access] }}</span> <a class="tiny" href="{{ url_for('child_access', cid=k.id) }}">настроить</a></td>
+      <td class="c nw">
+        {% for d, sym in (('up', '↑'), ('down', '↓')) %}
+        <form method="post" action="{{ url_for('child_move', cid=k.id) }}" class="inl"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="dir" value="{{ d }}"><button class="btn ghost sm" title="{{ 'Выше' if d == 'up' else 'Ниже' }}">{{ sym }}</button></form>
+        {% endfor %}
+      </td>
+      <td class="r">
+        {% if k.archived %}
+        <form method="post" action="{{ url_for('child_restore', cid=k.id) }}" class="inl"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn sm">Вернуть</button></form>
+        {% else %}
+        <form method="post" action="{{ url_for('child_archive', cid=k.id) }}" class="inl" data-confirm="Отправить в архив? Записи и выплаты закроются, история и накопление сохранятся."><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost sm">В архив</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="tiny mt">Окончательно удалить ребёнка нельзя: деньги и история не должны пропадать. Архивный ребёнок виден только администратору.</div>
+</section>
+
+<section class="card">
+  <h2>Добавить ребёнка</h2>
+  <form method="post" action="{{ url_for('child_create') }}" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="row">
+      <label class="field">Имя<input type="text" name="name" maxlength="40" required></label>
+      <label class="field">Скопировать тарифы, категории и подписантов из
+        <select name="copy_from"><option value="">— не копировать —</option>
+          {% for k in items %}<option value="{{ k.id }}">{{ k.name }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="tiny">Без копирования: категорий нет, суммы за оценки 0 ₽ (настраиваются на странице «Тарифы» ребёнка), подписанты и город договора берутся у первого ребёнка. Договор создаётся сразу (№ следующий, вида 2/{{ year }}); ФИО, возраст, класс и правила правятся на странице «Договор → Править».</div>
+    <button class="btn primary">Добавить</button>
+  </form>
+</section>
+{% endblock %}

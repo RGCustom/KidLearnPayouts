@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<section class="card login">
+  <h1>Привет, {{ name }}!</h1>
+  <p class="muted">Введите свой PIN, чтобы посмотреть свои деньги.</p>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="password" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="PIN" autocomplete="off" autofocus required>
+    <label class="check"><input type="checkbox" name="remember" value="1"><span>Запомнить это устройство на {{ remember_days }} дн.</span></label>
+    <button class="btn primary" type="submit">Войти</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Доступ: {{ ch.name }}{% endblock %}
+{% block content %}
+<p class="tiny"><a href="{{ url_for('children') }}">← дети</a></p>
+{% if ch.is_archived %}<div class="flash err">Ребёнок в архиве — вход по ссылке закрыт, пока его не вернут из архива.</div>{% endif %}
+<div class="grid">
+  <section class="card">
+    <h2>Доступ ребёнка: {{ ch.name }}</h2>
+    <form method="post" action="{{ url_for('child_access_save', cid=ch.id) }}" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="seg">
+        <label><input type="radio" name="mode" value="off" {{ 'checked' if mode == 'off' }}><span>Выкл</span></label>
+        <label><input type="radio" name="mode" value="link" {{ 'checked' if mode == 'link' }}><span>Ссылка</span></label>
+        <label><input type="radio" name="mode" value="pin" {{ 'checked' if mode == 'pin' }}><span>Ссылка + PIN</span></label>
+      </div>
+      <label class="field">PIN (4–8 цифр){% if has_pin %} — оставьте пустым, чтобы не менять{% endif %}
+        <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password"></label>
+      <label class="check"><input type="checkbox" name="gen_pin" value="1"><span>Сгенерировать PIN (6 цифр, покажется один раз)</span></label>
+      <button class="btn primary">Сохранить</button>
+      <div class="tiny">Смена режима или PIN отключает все устройства ребёнка. Ребёнок видит только своё и ничего не может менять. После 5 неверных PIN вход закрывается на 5 минут.</div>
+    </form>
+    {% if locked_left %}
+    <div class="flash err mt">PIN заблокирован ещё примерно на {{ (locked_left // 60) + 1 }} мин.</div>
+    <form method="post" action="{{ url_for('child_access_unlock', cid=ch.id) }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost sm">Снять блокировку</button></form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Ссылка</h2>
+    {% if link %}
+    <div class="row between linkrow">
+      <input type="text" id="kidLink" value="{{ link }}" readonly>
+      <button type="button" class="btn sm" data-copy="#kidLink">Копировать</button>
+    </div>
+    <div class="qr mt">{{ qr }}</div>
+    <div class="tiny mt">Ссылка открывает личные данные ребёнка. Передавайте её только ему. Если ссылка попала не туда — создайте новую.</div>
+    <form method="post" action="{{ url_for('child_access_token', cid=ch.id) }}" class="mt" data-confirm="Создать новую ссылку? Старая и все устройства ребёнка отключатся.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost sm">Создать новую ссылку</button>
+    </form>
+    {% else %}
+    <p class="muted">Доступ выключен — ссылка не работает. Выберите «Ссылка» или «Ссылка + PIN» и сохраните.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Устройства ребёнка</h2>
+  {% if sessions %}
+  <ul class="list">
+    {% for s in sessions %}
+    <li><span class="d">{{ s.last_seen|dt }}</span>
+      <span class="w">{{ s.device }}{% if s.remember %} <span class="pill">запомнено</span>{% endif %}</span>
+      <form method="post" action="{{ url_for('child_access_revoke', cid=ch.id, sid=s.id) }}" data-confirm="Отключить это устройство?">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><button class="x" title="Отключить">✕</button></form></li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="{{ url_for('child_access_logout_all', cid=ch.id) }}" class="mt" data-confirm="Отключить все устройства ребёнка?">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost sm">Отключить все</button></form>
+  {% else %}<p class="muted">Активных сеансов нет.</p>{% endif %}
+</section>
+{% endblock %}
