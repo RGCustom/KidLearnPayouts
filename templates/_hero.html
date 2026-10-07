@@ -8,4 +8,9 @@
   <div class="meter" title="До выплаты вне очереди"><span style="width: {{ progress }}%"></span></div>
   <div class="tiny">до выплаты вне очереди: {{ (limit - bal if bal > 0 else limit)|money }}</div>
   {% endif %}
+  <div class="totals">
+    <div class="tl">Выплачено всего</div>
+    <div class="tv p">{{ paid_total|money }}</div>
+    <div class="tiny">выплат: {{ paid_count }}</div>
+  </div>
 </section>

@@ -312,3 +312,9 @@ table.aud td.det{white-space:normal; word-break:break-word; min-width:220px}
   table.aud td:nth-child(4){grid-area:child; text-align:right; color:var(--muted); font-size:13px}
   table.aud td:nth-child(5){grid-area:det; min-width:0; color:#c7d0e4}
 }
+
+/* итог выплат за всё время на главной */
+.totals{position:relative; margin:22px auto 0; max-width:520px; padding-top:18px; border-top:1px solid var(--line)}
+.totals .tl{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em}
+.totals .tv{font-size:24px; font-weight:700; margin:2px 0; font-variant-numeric:tabular-nums}
+@media (max-width:560px){ .totals .tv{font-size:20px} }

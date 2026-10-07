@@ -1077,10 +1077,12 @@ def overview_context(con, cfg):
     """Данные страницы «Обзор» — общие для взрослых (index.html) и ребёнка (me_index.html)."""
     cid = cfg["id"]
     bal = balance(con, cid)
+    paid_total, paid_count = con.execute(
+        "SELECT COALESCE(SUM(amount),0), COUNT(*) FROM payouts WHERE child_id=?", (cid,)).fetchone()
     limit = cfg["extra_payout_limit"]
     recent = con.execute("SELECT * FROM events WHERE child_id=? ORDER BY date DESC, id DESC LIMIT 8", (cid,)).fetchall()
     return dict(
-        bal=bal, limit=limit, progress=max(0, min(100, bal * 100 // limit)) if limit else 0,
+        bal=bal, paid_total=paid_total, paid_count=paid_count, limit=limit, progress=max(0, min(100, bal * 100 // limit)) if limit else 0,
         over=bal > limit, hint=pay_hint(cfg["payout_weekday"]), recent=recent,
         chart=chart_svg(weekly_series(con, cid, 8)),
         today=date.today().isoformat(), tasks=cfg["tasks"], grades=cfg["grades"],
